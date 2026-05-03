@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentflow-pipeline"
+version = "0.1.0"
+description = "Hotspot → GitHub → data-source pipeline framework: discover, score, route, probe, publish, monitor."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "witness1993x" }]
+keywords = [
+    "agentflow",
+    "pipeline",
+    "github",
+    "hotspot",
+    "discovery",
+    "chainstream",
+    "data-source",
+    "publish",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+kafka = [
+    "confluent-kafka>=2.0",
+]
+kafka-fallback = [
+    "kafka-python>=2.0",
+]
+ai-reasoning = [
+    "anthropic>=0.40",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+agentflow-pipeline = "agentflow_pipeline.cli:_main_entry"
+agentflow-scaffold = "agentflow_pipeline.scaffold:main"
+agentflow-init = "agentflow_pipeline.init_command:main"
+agentflow-scan = "agentflow_pipeline.scan_hotspots:main"
+agentflow-trends = "agentflow_pipeline.trends_diff:main"
+agentflow-schedule = "agentflow_pipeline.schedule_installer:main"
+
+[project.urls]
+Homepage = "https://github.com/witness1993x/agentflow-pipeline"
+Issues = "https://github.com/witness1993x/agentflow-pipeline/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"agentflow_pipeline" = [
+    "templates/*.md",
+    "templates/*.yaml",
+    "templates/post-publish/*.md",
+    "templates/post-publish/github/CODEOWNERS",
+    "templates/post-publish/github/PULL_REQUEST_TEMPLATE.md",
+    "templates/post-publish/github/ISSUE_TEMPLATE/*.md",
+    "templates/post-publish/github/workflows/*.yml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

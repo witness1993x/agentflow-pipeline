@@ -1,0 +1,177 @@
+---
+name: agentflow-pipeline
+description: End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by ChainStream (or pluggable) on-chain data sources. Use when the user wants to (a) scan real-time hotspots across GitHub trending / HackerNews / Reddit, (b) decide what on-chain data project to build next, (c) scaffold + write + probe + publish a new GitHub repo end-to-end, (d) install a twice-daily auto-scan scheduler, (e) diff trends history to find new or rising entries. Provides 6 console scripts (agentflow-init / agentflow-pipeline / agentflow-scaffold / agentflow-scan / agentflow-schedule / agentflow-trends), an 8-gate fail-closed publish safety check, multi-agent friendly architecture, and a swappable DataSourcePlugin protocol so non-ChainStream backends (Bitquery, custom) plug in trivially.
+---
+
+# AgentFlow Pipeline
+
+This skill packages the `agentflow-pipeline` Python framework — a fully tested
+(339 pytest, 0.31s green) end-to-end machine for going from "what crypto/AI
+project should I build next" to a public GitHub repo, with optional twice-daily
+hotspot auto-scan + trends diff.
+
+## When to use this skill
+
+Invoke this skill when the user asks any of:
+
+- "what crypto/AI project is hot right now" / "市场调研" / "找下一个 ship 方向"
+- "scaffold a new pipeline case" / "ship a new repo from this hotspot"
+- "set up a twice-daily auto-scan" / "schedule hotspot tracking"
+- "diff this week's trends vs last week's" / "what's new in trends"
+- "publish this case to GitHub safely" / "auto-publish gate check"
+- Any reference to: ChainStream + GitHub workflow, hotspot → repo pipeline,
+  DataSource plugin, Pump.fun-like memecoin radar, EVM whale tracking,
+  stablecoin depeg monitor — these are first-class examples already shipped.
+
+## Install
+
+The skill bundle ships the Python source in `bundle/`. To install:
+
+```bash
+# Option 1: persistent venv install (recommended for repeated use)
+python3 -m venv ~/.agentflow-venv
+~/.agentflow-venv/bin/pip install -e ~/.claude/skills/agentflow-pipeline/bundle
+source ~/.agentflow-venv/bin/activate
+# 6 console scripts now on PATH:
+#   agentflow-init  agentflow-pipeline  agentflow-scaffold
+#   agentflow-scan  agentflow-schedule  agentflow-trends
+
+# Option 2: one-shot (no venv) — runs straight from the bundle
+python3 -m agentflow_pipeline.cli --help
+python3 -m agentflow_pipeline.scaffold --help
+python3 -m agentflow_pipeline.scan_hotspots --help
+```
+
+Once installed, ALWAYS run framework commands from the host project root (or
+pass `--root <path>` / `AGENTFLOW_ROOT=<path>` env). The CLI auto-corrects
+ROOT from `--case-dir` so a wrong cwd no longer creates nested workspaces.
+
+## Quick recipes
+
+### A. "Find what's hot right now"
+
+```bash
+agentflow-scan \
+  --root . \
+  --sources github,hackernews,reddit \
+  --queries "solana ai agent,evm whale alert,defi mcp server,perp dex bot" \
+  --top-n 30
+# → trends/YYYY-MM-DD-HH/scan.{md,json}
+
+agentflow-trends diff --root .   # after the second scan exists
+```
+
+### B. "Bootstrap a new host project"
+
+```bash
+mkdir my-data-projects && cd my-data-projects
+agentflow-init .                 # creates cases/, workspaces/, pipeline-pool.md, CLAUDE.md
+```
+
+### C. "Scaffold a case + go end-to-end"
+
+```bash
+agentflow-scaffold --hotspot-name "EVM Whale Pulse" --owner me \
+  --project-shape data_pipeline --status probe
+
+# fill the case yaml (chainstream_fit, repo_plan, build_commands)…
+# write source code in workspaces/HSP-001-…/
+
+agentflow-pipeline --case-dir cases/HSP-001-… --auto-publish-dry-run
+agentflow-pipeline --case-dir cases/HSP-001-… \
+  --auto-publish --auto-publish-confirm --reuse-existing-workspace
+```
+
+### D. "Install twice-daily auto-scan"
+
+```bash
+bash bundle/scripts/install_schedule.sh --root . --apply
+# macOS launchd: 09:00 + 21:00 → agentflow-scan into <root>/trends/
+# verify: bash bundle/scripts/install_schedule.sh --status
+# uninstall: bash bundle/scripts/install_schedule.sh --uninstall --apply
+```
+
+### E. "Switch off ChainStream to a different data source"
+
+```bash
+AGENTFLOW_DATA_SOURCE=bitquery agentflow-pipeline --case-dir … --mode data-probe --execute
+# or, per-call:
+agentflow-pipeline --data-source bitquery --case-dir … --mode discover --execute
+# Implement your own by satisfying the DataSourcePlugin protocol and registering it.
+```
+
+## Safety-critical defaults Claude should respect
+
+- **Publish is irreversible**: `agentflow-pipeline --auto-publish` runs the
+  8-gate `check_auto_publish_safety` — it will refuse without
+  `--auto-publish-confirm`, even when readiness=ready. Always show the
+  dry-run output (`--auto-publish-dry-run`) to the user first; never pass
+  `--auto-publish-confirm` unprompted.
+- **`--apply` everywhere is opt-in**: schedule install, monitoring secrets,
+  branch protection — all default to dry-run. Never add `--apply` without
+  explicit user authorization in the same turn.
+- **API keys go through env vars only**: `CHAINSTREAM_API_KEY`,
+  `ANTHROPIC_API_KEY`, etc. Never `--key=...` on the command line. The
+  framework does not log keys; Claude must not echo them either.
+- **`pool` mode forbids `publish`**: parallel pool runner rejects publish
+  to prevent fan-out misfires. This is intentional.
+- **`reuse-existing-workspace`** is the right flag when source code was
+  written manually before publish (typical for hand-coded ship). Without it
+  the framework requires an empty workspace.
+
+## Architecture cheat sheet
+
+The bundle ships ~17 focused modules under `agentflow_pipeline.*`:
+
+| Module | What it does |
+|---|---|
+| `cli.py` | Main entry, all modes (inspect/discover/data-probe/kafka-probe/probe/publish/pool) |
+| `scaffold.py` | Generate case 5-tuple from templates |
+| `scan_hotspots.py` | Multi-source single-shot scan → trends/ |
+| `trends_diff.py` | New / rising entry detection across scan history |
+| `schedule_installer.py` | Generate launchd plist / systemd timer |
+| `init_command.py` | One-shot host-project bootstrap |
+| `dedup_candidates.py` | URL canonicalize + cross-source merge |
+| `extra_sources.py` | HackerNews + Reddit token-free sources |
+| `topics_enrichment.py` | gh api repos topics 2nd-pass enrichment |
+| `chainstream_query_builder.py` | (chain_group, data_cube) → GraphQL query |
+| `data_source.py` | Pluggable DataSourcePlugin protocol |
+| `auto_publish.py` | 8-gate fail-closed publish guard |
+| `build_command_inference.py` | Manifest scan → install/build/test commands |
+| `kafka_probe.py` | Kafka data-probe (confluent-kafka or kafka-python) |
+| `monitoring_setup.py` | gh secret set / branch protection / dependabot / RUNBOOK |
+| `monitoring_grafana_pagerduty.py` | Grafana dashboard + PagerDuty service |
+| `post_publish.py` | Render templates/post-publish/* into a fresh repo |
+| `pool_runner.py` / `pool_advancer.py` | Cross-case parallel + readiness-driven advance |
+
+## Reference implementations Claude can mimic
+
+These are real shipped repos that used this framework end-to-end — perfect
+templates for new projects in similar shape:
+
+- https://github.com/witness1993x/chainstream-launch-radar (TypeScript, Solana DEXTrades, memecoin launch monitor)
+- https://github.com/witness1993x/whale-pulse-evm (TypeScript, EVM Transfers multichain, whale tracker)
+- https://github.com/witness1993x/stable-depeg-radar (Python, ChainStream Pairs+DEXTrades, stablecoin depeg early-warning)
+
+Each has the same skeleton: ChainStream client + scanner + format + CLI +
+optional Claude reasoning + tests + post-publish scaffolding.
+
+## Troubleshooting
+
+- **Cloudflare 1010 from ChainStream**: client must send a real User-Agent.
+  Framework `http_json` already does (`agentflow-pipeline/0.1`). External
+  scripts must do the same.
+- **Reddit returns nothing**: rate-limited (10 req/min/IP for unauth JSON).
+  Other sources still work; the framework marks reddit blocked and continues.
+- **`stable-radar` style projects use Pure stdlib runtime** — no `requests`,
+  no `aiohttp`. Keeps install footprint tiny and avoids dep churn.
+
+## Don't do
+
+- Don't run `--mode publish --execute --allow-publish` directly without going
+  through `--auto-publish-dry-run` first.
+- Don't `cd` into a workspace and then run framework CLI without `--root` —
+  the auto-correct will save you, but it shouldn't be needed.
+- Don't fork an archived candidate; `recommend_fork_or_build` already routes
+  archived repos to `build_new` automatically — respect that.
+- Don't put API keys in case yamls or memo markdown — only in env vars.

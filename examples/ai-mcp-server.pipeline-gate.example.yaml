@@ -1,0 +1,201 @@
+meta:
+  hotspot_id: "HSP-001"
+  hotspot_name: "AI MCP Server"
+  owner: "founder"
+  date: "2026-04-27"
+  mode: "express"
+  status: "probe"
+  review_cadence: "weekly"
+
+hotspot_question:
+  original_question: "Should we turn the AI MCP Server hotspot into a GitHub project?"
+  reframed_question: "是否值得围绕 AI MCP Server 热点做一个最小可运行、可编译的 MCP server 仓库来承接关注度与后续内容分发？"
+  why_this_should_be_a_repo: "这个热点天然适合用一个可运行仓库而不是纯说明文来体现价值。"
+  falsified_if:
+    - "热点虽然高，但没有明确开发者需要复用的最小仓库形态。"
+
+source_context:
+  hotspot_source: "community discussions + new MCP tool launches"
+  topic_lineage:
+    - "MCP"
+    - "AI tooling"
+    - "developer workflow"
+  related_links:
+    - "https://example.com/mcp-launch"
+
+repo_plan:
+  local_workspace: ""
+  repo_name: "ai-mcp-server"
+  github_owner: ""
+  visibility: "public"
+  default_branch: "main"
+
+gate_0_reframe:
+  true_problem: "开发者需要一个足够小、可跑通、能理解 MCP server 结构的仓库示例。"
+  alternatives:
+    - "只写文章，不做仓库"
+    - "做教程仓库而不是完整 MCP server"
+  minimum_repo_unit: "一个能启动、响应至少一种工具调用的最小 MCP server"
+  assumptions:
+    - "开发者更愿意 fork 或 clone 一个最小实例，而不是只看概念介绍。"
+  unknowns:
+    - "更适合新建 repo 还是从现有模板起盘"
+  verdict: "pass"
+
+gate_1_hotspot_signal:
+  score: 4
+  dimensions:
+    signal_strength: 4
+    behavior_evidence: 4
+    market_activity: 5
+    timing_window: 4
+    evidence_quality: 3
+  weakest_link: "evidence_quality"
+  evidence:
+    - source: "new MCP project launches"
+      type: "repo_activity"
+      evidence_tier: "secondary"
+      summary: "近期出现多个围绕 MCP 的开源项目和讨论。"
+      confidence: "medium"
+  kill_signals:
+    - "热点只停留在讨论层，没有实际仓库复用需求。"
+  verdict: "pass"
+
+gate_2_project_shape:
+  score: 4
+  project_shape: "mcp_server"
+  dimensions:
+    audience_clarity: 4
+    deliverable_clarity: 4
+    scope_control: 4
+    novelty_fit: 5
+    reuse_potential: 4
+  weakest_link: "audience_clarity"
+  evidence:
+    - source: "developer discussion"
+      type: "community_signal"
+      evidence_tier: "secondary"
+      summary: "大家更想看可跑通的实例，而不是抽象讨论。"
+      confidence: "medium"
+  kill_signals:
+    - "需求最终更像教程，而不是仓库。"
+  verdict: "pass"
+
+gate_3_repo_routing:
+  score: 3
+  repo_strategy: "template_clone"
+  discovered_query: "AI MCP Server MCP developer workflow"
+  recommended_strategy: "template_clone"
+  recommended_reason: "已有可用模板，且项目形态偏最小示例，适合先 template clone。"
+  candidate_repos:
+    - name: "minimal-mcp-template"
+      url: "https://example.com/minimal-mcp-template"
+      description: "Minimal MCP server template"
+      stars: 120
+      updated_at: "2026-04-20T00:00:00Z"
+      score: 88
+      ranking_reason: "名称和项目形态高度匹配，stars 与近期活跃度都不错。"
+      fit_reason: "可以快速验证结构"
+      license_note: "MIT"
+  dimensions:
+    upstream_fit: 4
+    license_safety: 4
+    implementation_speed: 4
+    differentiation_room: 2
+    maintenance_cost: 3
+  weakest_link: "differentiation_room"
+  kill_signals:
+    - "模板过重，改造成本高于直接新建。"
+  verdict: "hold"
+
+gate_4_buildability:
+  score: 3
+  build_commands:
+    install: "npm install"
+    build: "npm run build"
+    test: "npm test"
+  dimensions:
+    dependency_clarity: 4
+    local_build_feasibility: 3
+    testability: 3
+    docs_reproducibility: 3
+    private_dependency_risk: 4
+  weakest_link: "local_build_feasibility"
+  probe_requirements:
+    - "验证模板是否能直接构建"
+  kill_signals:
+    - "模板依赖私有配置或隐藏前置条件"
+  verdict: "hold"
+
+gate_5_publish_decision:
+  score: 3
+  dimensions:
+    public_value: 4
+    repo_readiness: 2
+    explainability: 4
+    maintenance_readiness: 2
+    distribution_value: 4
+  weakest_link: "repo_readiness"
+  kill_signals:
+    - "build probe 失败"
+  verdict: "hold"
+
+decision:
+  final_status: "probe"
+  summary: "热点与项目形态都成立，但 repo 路由和 buildability 还需要做一次本地验证。"
+  one_line_thesis: "先跑通一个最小 MCP server 模板，再决定是否正式发仓库。"
+  primary_constraint: "buildability"
+  why_now: "热点还在升温，适合快速 probe。"
+  why_not_now: "还没有明确证明模板路线和最小 build 路径足够顺。"
+  next_action: "做一次 template clone + local build probe"
+  next_review_date: "2026-05-04"
+  kill_triggers_resolved: "none"
+  veto_from_gate: "gate_4_buildability"
+  abandon_reason: ""
+
+build_probe:
+  hypothesis: "最小 MCP template 能在本地一小时内跑通 build 和 test。"
+  source_gate: "gate_4_buildability"
+  experiment_type: "template_probe"
+  cost: "low"
+  timebox: "1 day"
+  success_signal:
+    - "本地 build 通过"
+    - "最小测试可执行"
+  failure_signal:
+    - "隐藏依赖过多"
+    - "模板无法解释或复现"
+
+notes:
+  contrarian_views:
+    - "这个热点可能更适合做文章和 demo，而不是长期维护仓库。"
+  open_questions:
+    - "最终更适合 template_clone 还是 new_repo？"
+
+execution_state:
+  discovery:
+    last_run_at: "2026-04-27T18:00:00Z"
+    query: "AI MCP Server MCP developer workflow"
+    discovered_count: 1
+    selected_candidate_name: "minimal-mcp-template"
+    selected_candidate_url: "https://example.com/minimal-mcp-template"
+    selected_candidate_index: 0
+  probe:
+    last_run_at: ""
+    workspace: ""
+    install_status: "not_run"
+    build_status: "not_run"
+    test_status: "not_run"
+    summary: ""
+  publish:
+    last_run_at: ""
+    repo_ref: ""
+    publish_status: "not_run"
+    summary: ""
+
+review_log:
+  - date: "2026-04-27"
+    previous_status: "watch"
+    new_status: "probe"
+    what_changed: "已确认适合进入本地 build probe"
+    lessons: "仓库是否值得发，关键不在热点本身，而在最小仓库是否足够清晰"

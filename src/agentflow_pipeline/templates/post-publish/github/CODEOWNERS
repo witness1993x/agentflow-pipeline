@@ -1,0 +1,3 @@
+# Default reviewers for every path in this repository.
+# Add path-specific entries below as the codebase grows.
+* @{{ github_owner }}
