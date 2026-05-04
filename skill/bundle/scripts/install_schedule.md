@@ -269,3 +269,85 @@ bash scripts/install_schedule.sh [options]
   --status          status mode
   -h, --help        show help
 ```
+
+## Lark notification (optional)
+
+The default scan job (`agentflow-scan ... --notify-lark`) can post a Lark card after every
+scan. The card includes:
+
+- Top N hotspots from the scan (each with source + engagement)
+- Already-shipped framework repos (auto-discovered from `cases/HSP-*/02-pipeline-gate.yaml`
+  where `decision.final_status == "publish"`)
+- Buttons linking to the framework repo + each shipped repo + (optional) the scan markdown URL
+
+### Setup
+
+1. In your Lark group: 设置 → 群机器人 → 添加 → 自定义机器人 → 给个名字 (e.g. "AgentFlow Scan") → 复制 webhook URL
+2. (Optional but recommended) enable 自定义关键词 with `AgentFlow` as one of the keywords.
+3. (Optional) enable 签名校验 and copy the secret.
+4. Copy the env template and fill in the URL:
+   ```bash
+   cp .env.lark.example .env
+   # edit .env, paste the URL into LARK_WEBHOOK_URL
+   # optionally set LARK_WEBHOOK_SECRET / KEYWORDS / BRAND_PREFIX
+   ```
+5. Source the env in the same shell that owns the launchd job:
+   ```bash
+   set -a && source .env && set +a
+   ```
+6. Install the daily 10:00 job:
+   ```bash
+   bash scripts/install_schedule.sh \
+     --times "10:00" \
+     --scan-args "--notify-lark" \
+     --label com.agentflow.scan.daily-10am \
+     --apply
+   ```
+
+### macOS launchd env gotcha
+
+`launchd` does **not** inherit the env vars of the shell that ran the install. Without an
+extra step, `agentflow-scan --notify-lark` will run with `LARK_WEBHOOK_URL` empty and
+silently skip the Lark post.
+
+Two options to make the env survive:
+
+A. **Use `launchctl setenv`** (per-user, lasts until reboot — needs to be re-run on each
+boot via a `~/.zprofile` line or a separate `RunAtLoad` plist):
+```bash
+launchctl setenv LARK_WEBHOOK_URL "$LARK_WEBHOOK_URL"
+launchctl setenv LARK_WEBHOOK_SECRET "$LARK_WEBHOOK_SECRET"
+launchctl setenv LARK_WEBHOOK_KEYWORDS "$LARK_WEBHOOK_KEYWORDS"
+```
+
+B. **Wrap `agentflow-scan` in a shell script that sources `.env` first**, and point the
+plist at that wrapper instead of the bare binary. Cleanest long-term solution.
+
+### Verify (without waiting for 10:00)
+
+Trigger the job immediately:
+```bash
+launchctl kickstart -k gui/$(id -u)/com.agentflow.scan.daily-10am
+```
+Then check `~/Library/LaunchAgents/com.agentflow.scan.daily-10am.plist` is loaded:
+```bash
+launchctl list | grep agentflow
+```
+And confirm the scan output + Lark card both arrived:
+```bash
+ls <root>/trends/$(date -u +%Y-%m-%d)-10/   # or check Lark group
+```
+
+### Dry-run the card without posting
+
+```bash
+LARK_WEBHOOK_DRY_RUN=true agentflow-scan --root . --notify-lark --queries solana --top-n 5
+# → builds the card, prints the JSON plan, doesn't POST
+```
+
+### Disable the Lark side without uninstalling the job
+
+```bash
+launchctl unsetenv LARK_WEBHOOK_URL
+# next run: scan still produces trends/, the Lark step silently skips
+```

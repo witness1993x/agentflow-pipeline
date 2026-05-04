@@ -38,6 +38,14 @@ from urllib import error, parse, request
 from .dedup_candidates import canonicalize_url
 
 
+# Module-level binding for the Lark notifier. We resolve the real implementation
+# lazily inside ``main()`` (to avoid a hard import cycle while
+# ``lark_notifier.py`` is still being authored in parallel), but we expose the
+# name at module scope so test suites can ``monkeypatch.setattr`` it without
+# triggering the lazy import path.
+_notify_scan_complete: Callable[..., Any] | None = None  # type: ignore[name-defined]
+
+
 logger = logging.getLogger("agentflow.scan")
 if not logger.handlers:
     _handler = logging.StreamHandler(sys.stderr)
@@ -821,6 +829,28 @@ def register_scan_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Print the planned scan parameters without making any HTTP / gh calls.",
     )
+    parser.add_argument(
+        "--notify-lark",
+        action="store_true",
+        default=False,
+        help="After scan, post a Lark card via LARK_WEBHOOK_URL env. No-op when env unset.",
+    )
+    parser.add_argument(
+        "--lark-trends-view-url-template",
+        default="",
+        help="Optional URL template for the 'View scan.md' button. {date} substituted with YYYY-MM-DD-HH.",
+    )
+    parser.add_argument(
+        "--lark-framework-repo-url",
+        default="https://github.com/witness1993x/agentflow-pipeline",
+        help="URL for the 'framework repo' button on the Lark card.",
+    )
+    parser.add_argument(
+        "--lark-dry-run",
+        action="store_true",
+        default=False,
+        help="Build the Lark card payload but don't actually POST. Useful for cron debug.",
+    )
 
 
 def _resolve_output_dir(args: argparse.Namespace) -> Path:
@@ -913,7 +943,179 @@ def main(argv: list[str] | None = None) -> int:
             "All requested sources returned zero results; treating as fully blocked."
         )
         return 1
+
+    if getattr(args, "notify_lark", False):
+        _maybe_notify_lark(args, aggregate)
     return 0
+
+
+def _maybe_notify_lark(args: argparse.Namespace, aggregate: dict) -> None:
+    """Best-effort Lark notification — must NEVER raise into the cron caller.
+
+    Uses lazy imports / module-level binding so that:
+      * tests can ``monkeypatch.setattr`` the name without forcing the
+        real ``lark_notifier`` import,
+      * a parallel-developed ``lark_notifier`` module that is missing /
+        broken cannot turn a successful scan into an exit-1 cron failure.
+    """
+    quiet = bool(getattr(args, "quiet", False))
+    try:
+        global _notify_scan_complete
+        notify_fn = _notify_scan_complete
+        if notify_fn is None:
+            from .lark_notifier import notify_scan_complete as _real_notify  # noqa: WPS433
+
+            notify_fn = _real_notify
+            _notify_scan_complete = _real_notify
+
+        root_path = _resolve_root(getattr(args, "root", "") or None)
+        shipped = discover_shipped_repos(root_path)
+
+        # Derive the per-hour subdir name (e.g. "2026-05-01-10") from the
+        # output_dir we just wrote so the {date} template substitution lines
+        # up exactly with the on-disk artifact.
+        result_dir_name = ""
+        out_dir = aggregate.get("output_dir") or ""
+        if out_dir:
+            result_dir_name = Path(out_dir).name
+        trends_url = ""
+        template = getattr(args, "lark_trends_view_url_template", "") or ""
+        if template and result_dir_name:
+            trends_url = template.format(date=result_dir_name)
+
+        lark_result = notify_fn(
+            scan_result=aggregate,
+            shipped_repos=shipped,
+            framework_repo_url=getattr(
+                args,
+                "lark_framework_repo_url",
+                "https://github.com/witness1993x/agentflow-pipeline",
+            ),
+            trends_view_url=trends_url or None,
+            dry_run=bool(getattr(args, "lark_dry_run", False)),
+        )
+        if not quiet:
+            try:
+                sent = lark_result.get("sent")
+                reason = lark_result.get("skipped_reason")
+            except AttributeError:
+                sent = None
+                reason = None
+            print(f"[lark] sent={sent} reason={reason}")
+    except Exception as exc:  # noqa: BLE001 — final safety net for cron
+        if not quiet:
+            print(f"[lark] notify failed (caught): {exc}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------- #
+# Shipped-repos discovery (used by --notify-lark to enrich the card)
+# --------------------------------------------------------------------------- #
+def _guess_lang_from_candidate(cfg: dict) -> str | None:
+    """Best-effort language fallback from ``gate_3_repo_routing.candidate_repos[0]``.
+
+    Returns ``None`` when neither ``repo_meta.language`` (caller's first
+    choice) nor a candidate language can be found.
+    """
+    routing = cfg.get("gate_3_repo_routing") or {}
+    candidates = routing.get("candidate_repos") or []
+    if not isinstance(candidates, list) or not candidates:
+        return None
+    first = candidates[0]
+    if not isinstance(first, dict):
+        return None
+    lang = first.get("language")
+    if isinstance(lang, str) and lang.strip():
+        return lang.strip()
+    return None
+
+
+def discover_shipped_repos(root: Path) -> list[dict]:
+    """Scan ``<root>/cases/HSP-*/02-pipeline-gate.yaml`` for published repos.
+
+    Returns one dict per case whose ``decision.final_status == "publish"`` and
+    whose ``repo_plan`` carries both ``github_owner`` and ``repo_name``. Each
+    dict matches the contract consumed by ``lark_notifier.notify_scan_complete``::
+
+        {
+            "hotspot_id": "HSP-002",
+            "name": "wallet-pnl-tracker",
+            "url": "https://github.com/witness1993x/wallet-pnl-tracker",
+            "language": "Python" | None,
+            "shape": "data_pipeline" | None,
+        }
+
+    Errors loading any single yaml (parse failure, missing fields, etc.)
+    are swallowed — that single case is dropped, the rest are returned.
+    Missing ``<root>/cases`` returns ``[]``.
+    """
+    try:
+        import yaml  # local import: yaml is already a project dep
+    except ImportError:  # pragma: no cover - defensive
+        logger.warning("PyYAML not available; cannot discover shipped repos")
+        return []
+
+    cases_dir = Path(root) / "cases"
+    if not cases_dir.is_dir():
+        return []
+
+    out: list[dict] = []
+    for gate_path in sorted(cases_dir.glob("HSP-*/02-pipeline-gate.yaml")):
+        try:
+            raw = gate_path.read_text(encoding="utf-8")
+            cfg = yaml.safe_load(raw)
+        except Exception as exc:  # noqa: BLE001 — never crash discovery
+            logger.warning("skipping unreadable case %s: %s", gate_path, exc)
+            continue
+        if not isinstance(cfg, dict):
+            continue
+        decision = cfg.get("decision") or {}
+        if not isinstance(decision, dict):
+            continue
+        if decision.get("final_status") != "publish":
+            continue
+        repo_plan = cfg.get("repo_plan") or {}
+        if not isinstance(repo_plan, dict):
+            continue
+        owner = (repo_plan.get("github_owner") or "").strip() if isinstance(
+            repo_plan.get("github_owner"), str
+        ) else ""
+        repo_name = (repo_plan.get("repo_name") or "").strip() if isinstance(
+            repo_plan.get("repo_name"), str
+        ) else ""
+        if not owner or not repo_name:
+            continue
+        meta = cfg.get("meta") or {}
+        if not isinstance(meta, dict):
+            continue
+        hotspot_id = meta.get("hotspot_id")
+        if not isinstance(hotspot_id, str) or not hotspot_id.strip():
+            continue
+        repo_meta = cfg.get("repo_meta") or {}
+        if not isinstance(repo_meta, dict):
+            repo_meta = {}
+        lang = repo_meta.get("language")
+        if not (isinstance(lang, str) and lang.strip()):
+            lang = _guess_lang_from_candidate(cfg)
+        else:
+            lang = lang.strip()
+        shape_block = cfg.get("gate_2_project_shape") or {}
+        shape: str | None = None
+        if isinstance(shape_block, dict):
+            raw_shape = shape_block.get("project_shape")
+            if isinstance(raw_shape, str) and raw_shape.strip():
+                shape = raw_shape.strip()
+        out.append(
+            {
+                "hotspot_id": hotspot_id.strip(),
+                "name": repo_name,
+                "url": f"https://github.com/{owner}/{repo_name}",
+                "language": lang,
+                "shape": shape,
+            }
+        )
+
+    out.sort(key=lambda r: r["hotspot_id"])
+    return out
 
 
 # --------------------------------------------------------------------------- #

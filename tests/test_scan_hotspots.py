@@ -6,13 +6,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from agentflow_pipeline import scan_hotspots
 from agentflow_pipeline.scan_hotspots import (
     ALL_SOURCES,
     DEFAULT_QUERIES,
     DEFAULT_SOURCES,
+    _guess_lang_from_candidate,
     aggregate_scan_results,
+    discover_shipped_repos,
     main,
     register_scan_args,
     run_scan,
@@ -626,3 +629,381 @@ def test_main_queries_file_overrides_queries(monkeypatch, tmp_path, capsys) -> N
     assert rc == 0
     plan = json.loads(capsys.readouterr().out)
     assert plan["queries"] == ["file-query-one", "file-query-two"]
+
+
+# --------------------------------------------------------------------------- #
+# discover_shipped_repos / _guess_lang_from_candidate
+# --------------------------------------------------------------------------- #
+def _write_case(
+    root: Path,
+    *,
+    case_dir: str,
+    hotspot_id: str,
+    final_status: str,
+    owner: str,
+    repo_name: str,
+    project_shape: str | None = "data_pipeline",
+    repo_meta_lang: str | None = None,
+    candidate_lang: str | None = "TypeScript",
+) -> Path:
+    cfg: dict[str, Any] = {
+        "meta": {"hotspot_id": hotspot_id},
+        "repo_plan": {"github_owner": owner, "repo_name": repo_name},
+        "decision": {"final_status": final_status},
+        "gate_2_project_shape": {"project_shape": project_shape}
+        if project_shape is not None
+        else {},
+    }
+    if repo_meta_lang is not None:
+        cfg["repo_meta"] = {"language": repo_meta_lang}
+    if candidate_lang is not None:
+        cfg["gate_3_repo_routing"] = {
+            "candidate_repos": [
+                {"language": candidate_lang, "name": "fake/example"},
+            ]
+        }
+    case_path = root / "cases" / case_dir
+    case_path.mkdir(parents=True, exist_ok=True)
+    gate = case_path / "02-pipeline-gate.yaml"
+    gate.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    return gate
+
+
+def test_discover_shipped_repos_filters_and_sorts(tmp_path: Path) -> None:
+    # HSP-001: probe (not publish) -> excluded
+    _write_case(
+        tmp_path,
+        case_dir="HSP-001-2026-05-01-solana",
+        hotspot_id="HSP-001",
+        final_status="probe",
+        owner="witness1993x",
+        repo_name="solana-thing",
+    )
+    # HSP-002: publish + complete -> included
+    _write_case(
+        tmp_path,
+        case_dir="HSP-002-2026-05-01-wallet-pnl",
+        hotspot_id="HSP-002",
+        final_status="publish",
+        owner="witness1993x",
+        repo_name="wallet-pnl-tracker",
+        project_shape="data_pipeline",
+        candidate_lang="Python",
+    )
+    # HSP-003: publish but missing owner -> excluded
+    _write_case(
+        tmp_path,
+        case_dir="HSP-003-2026-05-02-evm",
+        hotspot_id="HSP-003",
+        final_status="publish",
+        owner="",
+        repo_name="evm-whale-pulse",
+    )
+    # HSP-004: publish + complete -> included
+    _write_case(
+        tmp_path,
+        case_dir="HSP-004-2026-05-02-stable-depeg",
+        hotspot_id="HSP-004",
+        final_status="publish",
+        owner="witness1993x",
+        repo_name="stable-depeg-radar",
+        project_shape="dashboard",
+        candidate_lang="Rust",
+    )
+
+    shipped = discover_shipped_repos(tmp_path)
+    assert [r["hotspot_id"] for r in shipped] == ["HSP-002", "HSP-004"]
+
+    r2, r4 = shipped
+    assert r2 == {
+        "hotspot_id": "HSP-002",
+        "name": "wallet-pnl-tracker",
+        "url": "https://github.com/witness1993x/wallet-pnl-tracker",
+        "language": "Python",
+        "shape": "data_pipeline",
+    }
+    assert r4["url"] == "https://github.com/witness1993x/stable-depeg-radar"
+    assert r4["language"] == "Rust"
+    assert r4["shape"] == "dashboard"
+
+
+def test_discover_shipped_repos_skips_unparseable_yaml(tmp_path: Path) -> None:
+    bad_dir = tmp_path / "cases" / "HSP-666-broken"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "02-pipeline-gate.yaml").write_text(
+        "this: is: not: valid: yaml: [", encoding="utf-8"
+    )
+    # Plus one valid published case, to confirm we don't abort the whole walk.
+    _write_case(
+        tmp_path,
+        case_dir="HSP-007-2026-05-03-good",
+        hotspot_id="HSP-007",
+        final_status="publish",
+        owner="witness1993x",
+        repo_name="good-repo",
+        candidate_lang="Go",
+    )
+    shipped = discover_shipped_repos(tmp_path)
+    assert [r["hotspot_id"] for r in shipped] == ["HSP-007"]
+    assert shipped[0]["language"] == "Go"
+
+
+def test_discover_shipped_repos_missing_root_returns_empty(tmp_path: Path) -> None:
+    # tmp_path has no `cases/` subdir at all.
+    assert discover_shipped_repos(tmp_path) == []
+    # Likewise a totally non-existent dir.
+    assert discover_shipped_repos(tmp_path / "nope" / "nada") == []
+
+
+def test_guess_lang_from_candidate_three_modes() -> None:
+    # Both repo_meta.language and candidate[0].language present -> caller
+    # prefers repo_meta in discover_shipped_repos, but the helper itself
+    # only inspects candidates. Verify all three modes here.
+    cfg_with_candidate = {
+        "gate_3_repo_routing": {
+            "candidate_repos": [{"language": "TypeScript"}, {"language": "Rust"}]
+        }
+    }
+    assert _guess_lang_from_candidate(cfg_with_candidate) == "TypeScript"
+
+    cfg_no_lang = {
+        "gate_3_repo_routing": {"candidate_repos": [{"name": "no-lang-here"}]}
+    }
+    assert _guess_lang_from_candidate(cfg_no_lang) is None
+
+    cfg_empty = {"gate_3_repo_routing": {"candidate_repos": []}}
+    assert _guess_lang_from_candidate(cfg_empty) is None
+    assert _guess_lang_from_candidate({}) is None
+
+    # And also: repo_meta.language is the discover-level preference. Build a
+    # full case where repo_meta wins over the candidate.
+    cfg_repo_meta_path: dict[str, Any] = {
+        "meta": {"hotspot_id": "HSP-100"},
+        "repo_plan": {"github_owner": "w", "repo_name": "r"},
+        "decision": {"final_status": "publish"},
+        "gate_2_project_shape": {"project_shape": "lib"},
+        "repo_meta": {"language": "Elixir"},
+        "gate_3_repo_routing": {"candidate_repos": [{"language": "Python"}]},
+    }
+    # Run via discover_shipped_repos to assert preference.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        case_dir = root / "cases" / "HSP-100-x"
+        case_dir.mkdir(parents=True)
+        (case_dir / "02-pipeline-gate.yaml").write_text(
+            yaml.safe_dump(cfg_repo_meta_path), encoding="utf-8"
+        )
+        shipped = discover_shipped_repos(root)
+        assert shipped == [
+            {
+                "hotspot_id": "HSP-100",
+                "name": "r",
+                "url": "https://github.com/w/r",
+                "language": "Elixir",
+                "shape": "lib",
+            }
+        ]
+
+
+# --------------------------------------------------------------------------- #
+# --notify-lark integration on the CLI
+# --------------------------------------------------------------------------- #
+class _NotifySpy:
+    """Capture call args/kwargs to notify_scan_complete; produce a tunable result."""
+
+    def __init__(
+        self,
+        *,
+        result: dict | None = None,
+        raise_exc: BaseException | None = None,
+    ) -> None:
+        self.calls: list[dict] = []
+        self.result = result or {
+            "sent": True,
+            "skipped_reason": None,
+            "card_title": "agentflow scan",
+            "body_size_bytes": 1234,
+        }
+        self.raise_exc = raise_exc
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        if self.raise_exc is not None:
+            raise self.raise_exc
+        return self.result
+
+
+def test_main_no_notify_lark_does_not_call_notifier(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Without --notify-lark, the notifier must never fire."""
+    _stub_run_scan_io(monkeypatch)
+    monkeypatch.setattr(
+        scan_hotspots, "default_run_command", lambda cmd, cwd=None: _fake_gh_run(cmd, cwd)
+    )
+    spy = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    rc = main(
+        [
+            "--queries",
+            "solana ai agent",
+            "--sources",
+            "github,hackernews,reddit",
+            "--reddit-subreddits",
+            "ethereum",
+            "--output-dir",
+            str(tmp_path / "trends"),
+            "--root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    assert spy.calls == []
+    out = capsys.readouterr().out
+    assert "[lark]" not in out
+
+
+def test_main_notify_lark_dry_run_calls_notifier_with_dry_run_kwarg(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    _stub_run_scan_io(monkeypatch)
+    monkeypatch.setattr(
+        scan_hotspots, "default_run_command", lambda cmd, cwd=None: _fake_gh_run(cmd, cwd)
+    )
+    spy = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    rc = main(
+        [
+            "--queries",
+            "solana ai agent",
+            "--sources",
+            "github",
+            "--output-dir",
+            str(tmp_path / "trends"),
+            "--root",
+            str(tmp_path),
+            "--notify-lark",
+            "--lark-dry-run",
+        ]
+    )
+    assert rc == 0
+    assert len(spy.calls) == 1
+    call_kwargs = spy.calls[0]["kwargs"]
+    assert call_kwargs["dry_run"] is True
+    assert call_kwargs["framework_repo_url"] == (
+        "https://github.com/witness1993x/agentflow-pipeline"
+    )
+    # No template provided -> trends_view_url is None.
+    assert call_kwargs["trends_view_url"] is None
+    # scan_result + shipped_repos passed positionally-by-keyword per contract.
+    assert "scan_result" in call_kwargs
+    assert isinstance(call_kwargs["scan_result"], dict)
+    assert "unique_count" in call_kwargs["scan_result"]
+    assert call_kwargs["shipped_repos"] == []  # tmp root has no cases/
+    out = capsys.readouterr().out
+    assert "[lark] sent=True reason=None" in out
+
+
+def test_main_notify_lark_failure_never_breaks_scan(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """If notify_scan_complete raises, scan must still exit 0."""
+    _stub_run_scan_io(monkeypatch)
+    monkeypatch.setattr(
+        scan_hotspots, "default_run_command", lambda cmd, cwd=None: _fake_gh_run(cmd, cwd)
+    )
+    spy = _NotifySpy(raise_exc=RuntimeError("lark webhook 500"))
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    rc = main(
+        [
+            "--queries",
+            "solana ai agent",
+            "--sources",
+            "github",
+            "--output-dir",
+            str(tmp_path / "trends"),
+            "--root",
+            str(tmp_path),
+            "--notify-lark",
+        ]
+    )
+    assert rc == 0
+    assert len(spy.calls) == 1
+    captured = capsys.readouterr()
+    assert "notify failed (caught)" in captured.err
+    assert "lark webhook 500" in captured.err
+
+
+def test_main_notify_lark_trends_url_template_is_substituted(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    _stub_run_scan_io(monkeypatch)
+    monkeypatch.setattr(
+        scan_hotspots, "default_run_command", lambda cmd, cwd=None: _fake_gh_run(cmd, cwd)
+    )
+    spy = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    template = "https://gh.com/r/blob/main/trends/{date}/scan.md"
+    rc = main(
+        [
+            "--queries",
+            "solana ai agent",
+            "--sources",
+            "github",
+            "--output-dir",
+            str(tmp_path / "trends"),
+            "--root",
+            str(tmp_path),
+            "--notify-lark",
+            "--lark-trends-view-url-template",
+            template,
+        ]
+    )
+    assert rc == 0
+    assert len(spy.calls) == 1
+    trends_url = spy.calls[0]["kwargs"]["trends_view_url"]
+    assert trends_url is not None
+    assert trends_url.startswith("https://gh.com/r/blob/main/trends/")
+    assert trends_url.endswith("/scan.md")
+    # The {date} segment must match the actual hour-dir we wrote.
+    files = list((tmp_path / "trends").rglob("scan.md"))
+    assert len(files) == 1
+    expected_date = files[0].parent.name
+    assert f"/trends/{expected_date}/scan.md" in trends_url
+
+
+def test_main_notify_lark_quiet_suppresses_lark_print(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """``--quiet`` should suppress both the success and failure [lark] prints."""
+    _stub_run_scan_io(monkeypatch)
+    monkeypatch.setattr(
+        scan_hotspots, "default_run_command", lambda cmd, cwd=None: _fake_gh_run(cmd, cwd)
+    )
+    spy = _NotifySpy(raise_exc=RuntimeError("boom"))
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    rc = main(
+        [
+            "--queries",
+            "solana ai agent",
+            "--sources",
+            "github",
+            "--output-dir",
+            str(tmp_path / "trends"),
+            "--root",
+            str(tmp_path),
+            "--notify-lark",
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "[lark]" not in captured.out
+    assert "[lark]" not in captured.err

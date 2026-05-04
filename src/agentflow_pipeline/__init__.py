@@ -38,6 +38,12 @@ from .kafka_probe import (
     run_chainstream_kafka_probe,
     update_gate_after_kafka_probe,
 )
+from .lark_notifier import (
+    LarkSendResult,
+    notify_scan_complete,
+    send_card,
+    send_text,
+)
 from .monitoring_grafana_pagerduty import (
     apply_grafana_dashboard,
     apply_pagerduty_service,
@@ -108,6 +114,11 @@ __all__ = [
     "kafka_probe_args_from_namespace",
     "run_chainstream_kafka_probe",
     "update_gate_after_kafka_probe",
+    # lark_notifier
+    "LarkSendResult",
+    "notify_scan_complete",
+    "send_card",
+    "send_text",
     # monitoring_grafana_pagerduty
     "apply_grafana_dashboard",
     "apply_pagerduty_service",

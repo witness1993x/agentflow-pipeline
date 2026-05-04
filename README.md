@@ -2,7 +2,7 @@
 
 **End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by [ChainStream](https://chainstream.io) (or pluggable) on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-339%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]()
+[![tests](https://img.shields.io/badge/tests-371%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.2.0-blue)]()
 
 > Why this exists: the path from "I noticed Pump.fun radars are trending" to "a public GitHub repo doing something useful with that signal" usually involves 30+ disconnected manual steps — gh search, HN scraping, Reddit scraping, dedup, market analysis, scaffold, write, npm/pip install, build, test, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 6 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer.
 >
@@ -92,6 +92,27 @@ bash scripts/install_schedule.sh --root /path/to/host-project --apply
 Default: 09:00 + 21:00 local time, label `com.agentflow.scan.daily` (macOS) / `agentflow-scan-daily` (linux). Verify with `bash scripts/install_schedule.sh --status`. Uninstall with `--uninstall --apply`.
 
 See [`scripts/install_schedule.md`](scripts/install_schedule.md) for the macOS PATH gotcha, custom times, and systemd setup details.
+
+## Lark notifications (optional)
+
+After every `agentflow-scan` run, optionally post a summary card to a Lark / Feishu group:
+
+```bash
+cp .env.lark.example .env
+# edit .env, paste your Lark webhook URL into LARK_WEBHOOK_URL
+
+set -a && source .env && set +a
+bash scripts/install_schedule.sh \
+  --times "10:00" \
+  --scan-args "--notify-lark" \
+  --label com.agentflow.scan.daily-10am \
+  --apply
+```
+
+The card includes the day's top hotspots, all shipped framework repos
+(auto-discovered from `cases/HSP-*/`), and one-click buttons to the
+framework repo + each shipped repo. See `scripts/install_schedule.md`
+for the full env reference + macOS launchd PATH/env gotchas.
 
 ## Use as a library in another project
 
