@@ -2,7 +2,7 @@
 
 **End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by [ChainStream](https://chainstream.io) (or pluggable) on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-371%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.2.0-blue)]()
+[![tests](https://img.shields.io/badge/tests-386%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.3.0-blue)]()
 
 > Why this exists: the path from "I noticed Pump.fun radars are trending" to "a public GitHub repo doing something useful with that signal" usually involves 30+ disconnected manual steps — gh search, HN scraping, Reddit scraping, dedup, market analysis, scaffold, write, npm/pip install, build, test, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 6 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer.
 >
@@ -113,6 +113,68 @@ The card includes the day's top hotspots, all shipped framework repos
 (auto-discovered from `cases/HSP-*/`), and one-click buttons to the
 framework repo + each shipped repo. See `scripts/install_schedule.md`
 for the full env reference + macOS launchd PATH/env gotchas.
+
+## Auto-promote (level B half-automation, optional)
+
+`agentflow-scan --auto-promote` lets the scanner automatically scaffold a
+new case (the 5-tuple of `01-hotspot-intake.md / 02-pipeline-gate.yaml /
+03-publish-decision-memo.md / 04-build-probe-run.md / 05-review-checkpoint.md`)
+for any newly-discovered hotspot whose engagement is high enough. **It does
+not write source code and does not publish** — it only generates the case
+skeleton so the operator can review the auto-filled hotspot intake and decide
+whether to write code + ship.
+
+### Safety model (mirrors auto-publish)
+
+- `--auto-promote` alone is dry-run (prints what it would create)
+- `--auto-promote --auto-promote-apply` is the real-create double flag
+- Hard cap per scan run: `--auto-promote-max 1` (default 1)
+- Engagement floor: `--auto-promote-min-engagement 150` (default 150 — sum of
+  GitHub stars + HN points + Reddit score across the entry's appearances)
+- "New" means: not in any of the past `--auto-promote-baseline-window`
+  scans (default 14 ≈ 1 week at twice-daily) AND not already a shipped repo
+  (`discover_shipped_repos` filter)
+- Promotion failures never break the scan; scan still exits 0
+
+### Daily 10:00 launchd config (recommended)
+
+To upgrade your existing `com.agentflow.scan.daily-10am` job:
+
+```bash
+source /tmp/agentflow-venv/bin/activate
+agentflow-schedule install \
+  --platform macos \
+  --label com.agentflow.scan.daily-10am \
+  --root /path/to/host-project \
+  --times "10:00" \
+  --scan-args="--notify-lark --auto-promote --auto-promote-apply --auto-promote-max 1 --auto-promote-min-engagement 150" \
+  --apply --force
+```
+
+After install, the daily 10:00 run will:
+1. Scan all configured sources → write `<root>/trends/YYYY-MM-DD-10/scan.{md,json}`
+2. Detect new high-engagement entries vs the past 14 scans
+3. Auto-scaffold up to 1 new case (the 5-tuple in `<root>/cases/HSP-XXX-...`)
+4. Post a Lark card containing top hotspots + shipped repos + the new case
+   listing + a "📝 promoted [N]" button linking to the source URL
+
+You then review the auto-generated case yamls — at your leisure — and decide
+which (if any) to write code for and `--auto-publish` later.
+
+### Tuning
+
+- Make threshold higher → fewer auto-promoted cases:
+  `--auto-promote-min-engagement 300`
+- Lower the cap to 0 → all promotion paths become "report only":
+  `--auto-promote-max 0`
+- Different default owner string (shows up in the case meta):
+  `--auto-promote-owner my-team`
+
+### Disable promotion without uninstalling the schedule
+
+Edit the plist's `--scan-args` to drop `--auto-promote-apply` (keep
+`--auto-promote` for dry-run reporting), or just remove both. Re-run
+`agentflow-schedule install ... --apply --force` to push the change.
 
 ## Use as a library in another project
 

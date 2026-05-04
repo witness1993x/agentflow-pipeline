@@ -41,6 +41,7 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, TypedDict
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -497,6 +498,60 @@ def _format_top_line(idx: int, item: dict[str, Any]) -> str:
     return f"{idx}. [{src}] {eng_int}★ `{title}`"
 
 
+def _format_promoted_case_dir(case_dir: str) -> str:
+    """Render ``case_dir`` as a framework-relative path for card body.
+
+    Tries to surface ``cases/<basename>`` (the canonical layout under the
+    framework root) when the absolute path contains a ``cases`` segment;
+    falls back to ``Path(case_dir).name`` so a malformed input still
+    renders something useful.
+    """
+    if not case_dir:
+        return ""
+    raw = str(case_dir)
+    # Normalise separators so the cases-segment lookup works on either
+    # POSIX or Windows-style inputs without dragging in os.sep.
+    parts = raw.replace("\\", "/").split("/")
+    # Walk from the end so a path like ``/x/cases/cases/HSP-1`` still
+    # picks the deepest cases/<...> segment (matches the canonical layout).
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i] == "cases" and i < len(parts) - 1:
+            return "/".join(parts[i:])
+    name = Path(raw).name
+    return name or raw
+
+
+def _render_promoted_section(promoted: list[dict]) -> list[str]:
+    """Render the ``📝 自动 promote`` section as a list of body lines.
+
+    Returns ``[]`` when the input is empty so callers can blindly
+    extend without inserting blank ``¶`` paragraphs.
+    """
+    cases = [c for c in promoted if isinstance(c, dict)]
+    if not cases:
+        return []
+
+    lines: list[str] = [
+        f"**📝 自动 promote 了 {len(cases)} 个新 case** (尚未写代码)"
+    ]
+    show = cases[:3]
+    for case in show:
+        hotspot_id = str(case.get("hotspot_id") or "?")
+        hotspot_name = str(case.get("hotspot_name") or "")
+        if len(hotspot_name) > 60:
+            hotspot_name = hotspot_name[:59] + "…"
+        rel = _format_promoted_case_dir(str(case.get("case_dir") or ""))
+        name_part = f" {hotspot_name}" if hotspot_name else ""
+        if rel:
+            lines.append(f"- `{hotspot_id}`{name_part} — `{rel}`")
+        else:
+            lines.append(f"- `{hotspot_id}`{name_part}")
+    extra = len(cases) - len(show)
+    if extra > 0:
+        lines.append(f"- (+ {extra} more)")
+    return lines
+
+
 def notify_scan_complete(
     *,
     scan_result: dict,
@@ -505,6 +560,7 @@ def notify_scan_complete(
     top_n: int = 5,
     dry_run: bool = False,
     trends_view_url: str | None = None,
+    auto_promoted_cases: list[dict] | None = None,
 ) -> LarkSendResult:
     """Render and send the daily-scan summary card.
 
@@ -514,22 +570,37 @@ def notify_scan_complete(
     repos the framework actually shipped this run, each item being
     ``{"name", "url", "language", "shape", "hotspot_id"}``.
 
+    ``auto_promoted_cases`` is an optional list of newly auto-promoted
+    case stubs from the ``--auto-promote`` flow, each item being
+    ``{"hotspot_id", "hotspot_name", "case_dir", "source_url"}``. When
+    non-empty a dedicated section + button is rendered; ``None``/empty
+    is treated as legacy mode and yields the original card byte-for-byte.
+
     Buttons (in order, capped at 5):
       1. ``📚 framework repo``
       2. up to 3 ``⭐ <repo-name>`` buttons (sorted by ``hotspot_id``)
-      3. ``📊 查看 scan.md`` when ``trends_view_url`` is set
+      3. ``📝 promoted [N]`` when ``auto_promoted_cases`` is non-empty
+         and the first case carries a ``source_url``
+      4. ``📊 查看 scan.md`` when ``trends_view_url`` is set
     """
     unique_count = int(scan_result.get("unique_count") or 0)
     by_source = scan_result.get("by_source") or {}
     duplicates_merged = int(scan_result.get("duplicates_merged") or 0)
     scanned_at_raw = str(scan_result.get("scanned_at") or "")
     top_items = list(scan_result.get("top") or [])
+    promoted_cases = [
+        c for c in (auto_promoted_cases or []) if isinstance(c, dict)
+    ]
 
     hh_mm, full_local = _format_scanned_at(scanned_at_raw)
     safe_top_n = max(1, int(top_n or 5))
 
-    # Header / accent based on volume.
-    if unique_count >= 30:
+    # Header / accent based on volume — promoted cases bump us to green
+    # so the operator can spot "today actually produced something" at a
+    # glance, even when overall volume is modest.
+    if promoted_cases and unique_count > 0:
+        accent = "green"
+    elif unique_count >= 30:
         accent = "green"
     elif unique_count >= 5:
         accent = "blue"
@@ -574,13 +645,18 @@ def notify_scan_complete(
             "**📦 尚未 ship 任何 repo (cases/ 下无 final_status=publish 的案例)**"
         )
 
+    promoted_lines = _render_promoted_section(promoted_cases)
+    if promoted_lines:
+        body_lines.append("")
+        body_lines.extend(promoted_lines)
+
     if full_local:
         body_lines.append("")
         body_lines.append(f"scanned_at: `{full_local}`")
 
     body_md = "\n".join(body_lines)
 
-    # Buttons: framework -> up to 3 ship'd repos -> trends-view link.
+    # Buttons: framework -> up to 3 ship'd repos -> promoted -> trends-view.
     actions: list[tuple[str, str]] = [
         ("📚 framework repo", framework_repo_url),
     ]
@@ -591,6 +667,12 @@ def notify_scan_complete(
         url = str(repo.get("url") or "")
         if name and url:
             actions.append((f"⭐ {name}", url))
+    if promoted_cases:
+        first_source = str(promoted_cases[0].get("source_url") or "")
+        if first_source:
+            actions.append(
+                (f"📝 promoted [{len(promoted_cases)}]", first_source)
+            )
     if trends_view_url:
         actions.append(("📊 查看 scan.md", trends_view_url))
 

@@ -500,3 +500,256 @@ def test_lark_send_result_typed_dict_keys() -> None:
         "card_title",
         "body_size_bytes",
     }
+
+
+# ---------------------------------------------------------------------------
+# 17. auto_promoted_cases — backwards compatibility (omitted == empty)
+# ---------------------------------------------------------------------------
+def test_notify_scan_complete_omitting_auto_promoted_matches_legacy(
+    clean_env,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_fixture: dict,
+    shipped_fixture: list[dict],
+) -> None:
+    """No kwarg / None / [] all produce a byte-identical legacy card."""
+    monkeypatch.setenv("LARK_WEBHOOK_URL", "https://example.com/lark/hook")
+    spy = _UrlopenSpy()
+    monkeypatch.setattr(lark_notifier.urlrequest, "urlopen", spy)
+
+    notify_scan_complete(
+        scan_result=scan_fixture, shipped_repos=shipped_fixture, top_n=3
+    )
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=None,
+    )
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=[],
+    )
+    assert len(spy.calls) == 3
+    payloads = [c["payload"] for c in spy.calls]
+    bodies = [p["card"]["elements"][0]["text"]["content"] for p in payloads]
+    # All three renders must be byte-identical to the legacy baseline.
+    assert bodies[0] == bodies[1] == bodies[2]
+    # And critically must NOT mention the auto-promote section.
+    assert "自动 promote" not in bodies[0]
+    # Buttons identical too — same labels in the same order.
+    label_sets = []
+    for payload in payloads:
+        action = next(
+            el for el in payload["card"]["elements"] if el.get("tag") == "action"
+        )
+        label_sets.append([a["text"]["content"] for a in action["actions"]])
+    assert label_sets[0] == label_sets[1] == label_sets[2]
+
+
+# ---------------------------------------------------------------------------
+# 18. auto_promoted_cases — single case renders section + button + green accent
+# ---------------------------------------------------------------------------
+def test_notify_scan_complete_one_promoted_case(
+    clean_env,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_fixture: dict,
+    shipped_fixture: list[dict],
+) -> None:
+    monkeypatch.setenv("LARK_WEBHOOK_URL", "https://example.com/lark/hook")
+    spy = _UrlopenSpy()
+    monkeypatch.setattr(lark_notifier.urlrequest, "urlopen", spy)
+
+    promoted = [
+        {
+            "hotspot_id": "HSP-005",
+            "hotspot_name": "evm-arb-bot",
+            "case_dir": "/Users/op/agentflow/cases/HSP-005-2026-05-04-evm-arb-bot",
+            "source_url": "https://github.com/example/evm-arb-bot",
+        }
+    ]
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=promoted,
+    )
+    payload = spy.calls[0]["payload"]
+    body = payload["card"]["elements"][0]["text"]["content"]
+
+    # Section present with the right header + entry.
+    assert "**📝 自动 promote 了 1 个新 case** (尚未写代码)" in body
+    assert "`HSP-005`" in body
+    assert "evm-arb-bot" in body
+    # Relative path shown — drops the absolute prefix.
+    assert "cases/HSP-005-2026-05-04-evm-arb-bot" in body
+    assert "/Users/op/agentflow/" not in body
+    # No "(+ N more)" line for a single case.
+    assert "more)" not in body
+
+    # Button present, labelled with count = 1, linking to source_url.
+    action = next(
+        el for el in payload["card"]["elements"] if el.get("tag") == "action"
+    )
+    labels = [a["text"]["content"] for a in action["actions"]]
+    assert "📝 promoted [1]" in labels
+    promoted_btn = next(
+        a for a in action["actions"] if a["text"]["content"] == "📝 promoted [1]"
+    )
+    assert promoted_btn["url"] == "https://github.com/example/evm-arb-bot"
+
+    # Accent bumped to green (unique_count > 0 + promoted non-empty).
+    assert payload["card"]["header"]["template"] == "green"
+
+
+# ---------------------------------------------------------------------------
+# 19. auto_promoted_cases — 5 cases truncates to 3 + "(+ 2 more)"
+# ---------------------------------------------------------------------------
+def test_notify_scan_complete_five_promoted_cases_truncates(
+    clean_env,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_fixture: dict,
+    shipped_fixture: list[dict],
+) -> None:
+    monkeypatch.setenv("LARK_WEBHOOK_URL", "https://example.com/lark/hook")
+    spy = _UrlopenSpy()
+    monkeypatch.setattr(lark_notifier.urlrequest, "urlopen", spy)
+
+    promoted = [
+        {
+            "hotspot_id": f"HSP-{100 + i:03d}",
+            "hotspot_name": f"hotspot-name-{i}",
+            "case_dir": f"/root/agentflow/cases/HSP-{100 + i:03d}-name-{i}",
+            "source_url": f"https://example.com/src/{i}",
+        }
+        for i in range(5)
+    ]
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=promoted,
+    )
+    payload = spy.calls[0]["payload"]
+    body = payload["card"]["elements"][0]["text"]["content"]
+
+    # Header reports the full count, not the truncated 3.
+    assert "**📝 自动 promote 了 5 个新 case** (尚未写代码)" in body
+    # First three cases listed.
+    for i in range(3):
+        assert f"HSP-{100 + i:03d}" in body
+    # Fourth and fifth NOT listed in their own bullet.
+    for i in range(3, 5):
+        assert f"`HSP-{100 + i:03d}`" not in body
+    # Overflow line.
+    assert "(+ 2 more)" in body
+
+    # Button label reflects the full count.
+    action = next(
+        el for el in payload["card"]["elements"] if el.get("tag") == "action"
+    )
+    labels = [a["text"]["content"] for a in action["actions"]]
+    assert "📝 promoted [5]" in labels
+    promoted_btn = next(
+        a for a in action["actions"] if a["text"]["content"] == "📝 promoted [5]"
+    )
+    # Links to the FIRST case's source_url.
+    assert promoted_btn["url"] == "https://example.com/src/0"
+
+
+# ---------------------------------------------------------------------------
+# 20. auto_promoted_cases — empty source_url → no button, but section renders
+# ---------------------------------------------------------------------------
+def test_notify_scan_complete_promoted_without_source_url_skips_button(
+    clean_env,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_fixture: dict,
+    shipped_fixture: list[dict],
+) -> None:
+    monkeypatch.setenv("LARK_WEBHOOK_URL", "https://example.com/lark/hook")
+    spy = _UrlopenSpy()
+    monkeypatch.setattr(lark_notifier.urlrequest, "urlopen", spy)
+
+    promoted = [
+        {
+            "hotspot_id": "HSP-009",
+            "hotspot_name": "no-url-case",
+            "case_dir": "/x/cases/HSP-009-no-url",
+            "source_url": "",  # empty — no button should be added
+        }
+    ]
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=promoted,
+    )
+    payload = spy.calls[0]["payload"]
+    body = payload["card"]["elements"][0]["text"]["content"]
+
+    # Body section still rendered.
+    assert "**📝 自动 promote 了 1 个新 case** (尚未写代码)" in body
+    assert "`HSP-009`" in body
+    assert "no-url-case" in body
+    assert "cases/HSP-009-no-url" in body
+
+    # But no promote button.
+    action = next(
+        el for el in payload["card"]["elements"] if el.get("tag") == "action"
+    )
+    labels = [a["text"]["content"] for a in action["actions"]]
+    assert not any(l.startswith("📝 promoted") for l in labels)
+
+
+# ---------------------------------------------------------------------------
+# 21. button cap — 1 promoted + 4 shipped + trends_view → 5 with promote
+#     winning the trends slot
+# ---------------------------------------------------------------------------
+def test_notify_scan_complete_promote_button_priority_in_cap(
+    clean_env,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_fixture: dict,
+) -> None:
+    monkeypatch.setenv("LARK_WEBHOOK_URL", "https://example.com/lark/hook")
+    spy = _UrlopenSpy()
+    monkeypatch.setattr(lark_notifier.urlrequest, "urlopen", spy)
+
+    four_shipped = [
+        {
+            "name": f"repo-{i}",
+            "url": f"https://github.com/example/repo-{i}",
+            "language": "Python",
+            "shape": "alert_bot",
+            "hotspot_id": f"HSP-{i:03d}",
+        }
+        for i in range(4)
+    ]
+    promoted = [
+        {
+            "hotspot_id": "HSP-099",
+            "hotspot_name": "promoted-stub",
+            "case_dir": "/r/cases/HSP-099-promoted-stub",
+            "source_url": "https://example.com/promoted-src",
+        }
+    ]
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=four_shipped,
+        trends_view_url="https://trends.example.com/scan.md",
+        auto_promoted_cases=promoted,
+    )
+    payload = spy.calls[0]["payload"]
+    action = next(
+        el for el in payload["card"]["elements"] if el.get("tag") == "action"
+    )
+    labels = [a["text"]["content"] for a in action["actions"]]
+
+    # Hard-capped at 5.
+    assert len(labels) == lark_notifier._MAX_BUTTONS_PER_CARD
+    # Order: framework -> 3 shipped (HSP-000..002) -> promoted -> [trends DROPPED].
+    assert labels[0] == "📚 framework repo"
+    assert all(labels[i].startswith("⭐ repo-") for i in (1, 2, 3))
+    assert labels[4] == "📝 promoted [1]"
+    # Trends-view button got pushed past the cap.
+    assert "📊 查看 scan.md" not in labels

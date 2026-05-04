@@ -851,6 +851,55 @@ def register_scan_args(parser: argparse.ArgumentParser) -> None:
         default=False,
         help="Build the Lark card payload but don't actually POST. Useful for cron debug.",
     )
+    parser.add_argument(
+        "--auto-promote",
+        action="store_true",
+        default=False,
+        help=(
+            "After scan, auto-scaffold cases for newly-discovered hotspots passing "
+            "engagement threshold. Only generates the case 5-tuple — does NOT write "
+            "source code or publish. Default dry-run; pass --auto-promote-apply to "
+            "actually create cases."
+        ),
+    )
+    parser.add_argument(
+        "--auto-promote-apply",
+        action="store_true",
+        default=False,
+        help=(
+            "Required together with --auto-promote to actually create cases. Without "
+            "this, --auto-promote prints a plan only."
+        ),
+    )
+    parser.add_argument(
+        "--auto-promote-max",
+        type=int,
+        default=1,
+        help="Max number of cases to auto-promote per scan run (default: 1; safety cap).",
+    )
+    parser.add_argument(
+        "--auto-promote-min-engagement",
+        type=int,
+        default=150,
+        help=(
+            "Minimum engagement (stars + comments + score) for an entry to be "
+            "auto-promoted (default: 150)."
+        ),
+    )
+    parser.add_argument(
+        "--auto-promote-owner",
+        default="agentflow-auto",
+        help="Owner string written to the auto-promoted case meta (default: 'agentflow-auto').",
+    )
+    parser.add_argument(
+        "--auto-promote-baseline-window",
+        type=int,
+        default=14,
+        help=(
+            "How many past scan files form the baseline for 'is this a new entry?' "
+            "(default: 14 = ~7 days at 2x/day)."
+        ),
+    )
 
 
 def _resolve_output_dir(args: argparse.Namespace) -> Path:
@@ -944,12 +993,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    root_path = _resolve_root(getattr(args, "root", "") or None)
+    promoted_cases = _maybe_auto_promote(args, aggregate, root_path)
     if getattr(args, "notify_lark", False):
-        _maybe_notify_lark(args, aggregate)
+        _maybe_notify_lark(args, aggregate, root_path, promoted_cases=promoted_cases)
     return 0
 
 
-def _maybe_notify_lark(args: argparse.Namespace, aggregate: dict) -> None:
+def _maybe_notify_lark(
+    args: argparse.Namespace,
+    aggregate: dict,
+    root: Path | None = None,
+    *,
+    promoted_cases: list[dict] | None = None,
+) -> None:
     """Best-effort Lark notification — must NEVER raise into the cron caller.
 
     Uses lazy imports / module-level binding so that:
@@ -957,6 +1014,11 @@ def _maybe_notify_lark(args: argparse.Namespace, aggregate: dict) -> None:
         real ``lark_notifier`` import,
       * a parallel-developed ``lark_notifier`` module that is missing /
         broken cannot turn a successful scan into an exit-1 cron failure.
+
+    ``promoted_cases`` (if provided) is forwarded to ``notify_scan_complete``
+    via the ``auto_promoted_cases`` kwarg so the Lark card can render an
+    "Auto-promoted hotspots" section. The list shape is contracted in
+    ``lark_notifier``; this function does not interpret its contents.
     """
     quiet = bool(getattr(args, "quiet", False))
     try:
@@ -968,7 +1030,9 @@ def _maybe_notify_lark(args: argparse.Namespace, aggregate: dict) -> None:
             notify_fn = _real_notify
             _notify_scan_complete = _real_notify
 
-        root_path = _resolve_root(getattr(args, "root", "") or None)
+        root_path = root if root is not None else _resolve_root(
+            getattr(args, "root", "") or None
+        )
         shipped = discover_shipped_repos(root_path)
 
         # Derive the per-hour subdir name (e.g. "2026-05-01-10") from the
@@ -993,6 +1057,7 @@ def _maybe_notify_lark(args: argparse.Namespace, aggregate: dict) -> None:
             ),
             trends_view_url=trends_url or None,
             dry_run=bool(getattr(args, "lark_dry_run", False)),
+            auto_promoted_cases=list(promoted_cases or []),
         )
         if not quiet:
             try:
@@ -1005,6 +1070,179 @@ def _maybe_notify_lark(args: argparse.Namespace, aggregate: dict) -> None:
     except Exception as exc:  # noqa: BLE001 — final safety net for cron
         if not quiet:
             print(f"[lark] notify failed (caught): {exc}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------- #
+# Auto-promote (--auto-promote): scaffold cases for new hot entries
+# --------------------------------------------------------------------------- #
+def _maybe_auto_promote(
+    args: argparse.Namespace,
+    aggregate: dict,
+    root: Path,
+) -> list[dict]:
+    """Auto-scaffold cases for new high-engagement hotspots.
+
+    Algorithm:
+
+    1. No-op unless ``--auto-promote`` is set on ``args``.
+    2. Load the rolling scan history from ``<root>/trends`` (the scan we just
+       wrote is already on disk because ``run_scan`` persisted it before this
+       helper runs). Need at least 2 scans to define "new" — without a
+       baseline every entry would falsely appear novel.
+    3. Diff the latest scan against the prior ``baseline_window`` (default
+       14 ~= 7 days at 2x/day) using ``trends_diff.detect_new_entries``.
+    4. Filter out URLs that already correspond to a *shipped* case (we don't
+       want to re-promote what we already published).
+    5. Cap at ``max_count`` and call ``trends_diff.promote_to_case`` per
+       entry. ``--auto-promote`` alone keeps ``dry_run=True`` (plan only);
+       ``--auto-promote-apply`` flips it to ``False`` so a real case gets
+       scaffolded.
+    6. Any failure in any step is caught — it MUST NOT break the scan exit
+       code, since this helper runs on the cron path.
+
+    Returns
+    -------
+    A list of ``{"hotspot_id", "hotspot_name", "case_dir", "source_url"}``
+    dicts (possibly empty), suitable for forwarding to
+    ``lark_notifier.notify_scan_complete(auto_promoted_cases=...)``.
+    """
+    if not getattr(args, "auto_promote", False):
+        return []
+
+    quiet = bool(getattr(args, "quiet", False))
+    apply_mode = bool(getattr(args, "auto_promote_apply", False))
+    max_count = int(getattr(args, "auto_promote_max", 1) or 0)
+    min_engagement = int(getattr(args, "auto_promote_min_engagement", 150) or 0)
+    owner = getattr(args, "auto_promote_owner", "agentflow-auto") or "agentflow-auto"
+    baseline_window_size = int(
+        getattr(args, "auto_promote_baseline_window", 14) or 0
+    )
+
+    try:
+        from .trends_diff import (  # noqa: WPS433 — lazy to avoid import cycles
+            detect_new_entries,
+            load_scan_history,
+            promote_to_case,
+        )
+
+        trends_dir = Path(root) / "trends"
+        history = load_scan_history(
+            trends_dir, limit=max(2, baseline_window_size + 1)
+        )
+        if len(history) < 2:
+            # Not enough history to know what's "new"; promoting everything in
+            # latest would be too aggressive. Wait for the next scan.
+            if not quiet:
+                print(
+                    f"[promote] skip: only {len(history)} scan(s) in history; "
+                    "need >=2 for new-entry detection"
+                )
+            return []
+
+        latest_record = history[0]
+        latest = latest_record.get("scan_data") or {}
+        # Embed scanned_at so first_seen_at flows through correctly, mirroring
+        # what trends_diff.run_trends_diff does internally.
+        if isinstance(latest, dict) and "scanned_at" not in latest:
+            latest = {**latest, "scanned_at": latest_record.get("scanned_at", "")}
+        baseline_window = list(history[1:])
+
+        new_entries = detect_new_entries(
+            latest, baseline_window, min_engagement=min_engagement
+        )
+
+        # Exclude entries whose URL matches an already-shipped repo: we never
+        # want to re-promote something that's already published as a case.
+        shipped = discover_shipped_repos(root)
+        shipped_urls = {
+            str(repo.get("url", "")).rstrip("/").lower()
+            for repo in shipped
+            if repo.get("url")
+        }
+        if shipped_urls:
+            new_entries = [
+                entry
+                for entry in new_entries
+                if str(entry.get("url", "")).rstrip("/").lower() not in shipped_urls
+            ]
+
+        # Apply max_count cap (safety: never spam-create cases per scan).
+        candidates = new_entries[: max(0, max_count)]
+        if not candidates:
+            if not quiet:
+                print(
+                    f"[promote] no new entries above engagement={min_engagement}"
+                )
+            return []
+
+        promoted: list[dict] = []
+        for entry in candidates:
+            hotspot_name = (
+                entry.get("title")
+                or entry.get("name")
+                or entry.get("url")
+                or "Unknown Hotspot"
+            )
+            try:
+                result = promote_to_case(
+                    entry,
+                    root=root,
+                    owner=owner,
+                    project_shape="data_pipeline",
+                    dry_run=not apply_mode,
+                )
+            except Exception as inner_exc:  # noqa: BLE001 — single-entry isolation
+                if not quiet:
+                    print(
+                        f"[promote] entry failed (caught, scan still ok): "
+                        f"{inner_exc}",
+                        file=sys.stderr,
+                    )
+                continue
+
+            case_dir = result.get("case_dir") if isinstance(result, dict) else None
+            if not case_dir:
+                # promote_to_case in dry-run mode does not write a case_dir —
+                # but it does return the planned argv. Surface a synthetic
+                # "would-create" entry so the Lark card / cron log can show
+                # what *would* have happened.
+                argv = result.get("argv") if isinstance(result, dict) else None
+                case_dir = ""
+                if isinstance(argv, list) and "--root" in argv:
+                    try:
+                        idx = argv.index("--hotspot-name")
+                        synthesized = f"<dry-run:{argv[idx + 1]}>"
+                        case_dir = synthesized
+                    except (ValueError, IndexError):
+                        case_dir = "<dry-run>"
+                else:
+                    case_dir = "<dry-run>"
+
+            hotspot_id = ""
+            if isinstance(result, dict):
+                hotspot_id = str(result.get("hotspot_id") or "")
+            promoted.append(
+                {
+                    "hotspot_id": hotspot_id,
+                    "hotspot_name": str(hotspot_name),
+                    "case_dir": str(case_dir),
+                    "source_url": str(entry.get("url") or ""),
+                }
+            )
+            if not quiet:
+                mode_label = "created" if apply_mode else "would-create (dry-run)"
+                print(
+                    f"[promote] {mode_label}: {hotspot_id or '(no-id)'} "
+                    f"{hotspot_name}"
+                )
+        return promoted
+    except Exception as exc:  # noqa: BLE001 — final safety net for cron
+        if not quiet:
+            print(
+                f"[promote] failed (caught, scan still ok): {exc}",
+                file=sys.stderr,
+            )
+        return []
 
 
 # --------------------------------------------------------------------------- #

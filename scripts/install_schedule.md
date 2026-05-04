@@ -351,3 +351,85 @@ LARK_WEBHOOK_DRY_RUN=true agentflow-scan --root . --notify-lark --queries solana
 launchctl unsetenv LARK_WEBHOOK_URL
 # next run: scan still produces trends/, the Lark step silently skips
 ```
+
+## Auto-promote (level B)
+
+`agentflow-scan` can auto-scaffold a new case (the 5-tuple under
+`<root>/cases/HSP-XXX-.../`) for any newly-discovered hotspot whose
+engagement is high enough. It does **not** write source code and does
+**not** publish — it only generates the case skeleton so the operator
+can review the auto-filled hotspot intake and decide whether to write
+code + ship.
+
+### Safety model
+
+- `--auto-promote` alone is dry-run (prints what it would create)
+- `--auto-promote --auto-promote-apply` is the real-create double flag
+- Hard cap per scan run: `--auto-promote-max N` (default 1)
+- Engagement floor: `--auto-promote-min-engagement N` (default 150 —
+  sum of GitHub stars + HN points + Reddit score across appearances)
+- "New" means: not in any of the past `--auto-promote-baseline-window`
+  scans (default 14 ≈ 1 week at twice-daily) AND not already a shipped
+  repo (filtered via `discover_shipped_repos`)
+- Owner string in the generated case meta:
+  `--auto-promote-owner <name>` (default `agentflow-auto`)
+- Promotion failures never break the scan; scan still exits 0
+
+### Daily 10:00 launchd upgrade command
+
+To upgrade your existing `com.agentflow.scan.daily-10am` job to also
+auto-promote (with Lark enabled):
+
+```bash
+source /tmp/agentflow-venv/bin/activate
+agentflow-schedule install \
+  --platform macos \
+  --label com.agentflow.scan.daily-10am \
+  --root /path/to/host-project \
+  --times "10:00" \
+  --scan-args="--notify-lark --auto-promote --auto-promote-apply --auto-promote-max 1 --auto-promote-min-engagement 150" \
+  --apply --force
+```
+
+`--apply --force` overwrites the existing plist cleanly with the new
+`ProgramArguments`, then re-bootstraps the LaunchAgent. The Lark env
+gotcha above still applies — make sure `LARK_WEBHOOK_URL` is reachable
+to the launchd context (option A or B in the previous section).
+
+### First kickstart caveat
+
+Auto-promote needs ≥ 2 historical scans to detect "new" entries — the
+very first run after install has nothing to diff against, so it will
+report `[auto-promote] no history yet, skipping` and create no cases.
+The second scheduled scan (or a manual `launchctl kickstart`) is when
+promotion first becomes active. If you want to seed history without
+waiting, run `agentflow-scan --root <root>` manually a couple of times
+before relying on the launchd-driven promotion.
+
+### Verify promoted cases
+
+After a run that should have promoted something, list the most recent
+case dirs under your host project:
+
+```bash
+ls -lt /path/to/host-project/cases/HSP-*/ | head -5
+```
+
+Each promoted case will contain the standard 5-tuple
+(`01-hotspot-intake.md`, `02-pipeline-gate.yaml`,
+`03-publish-decision-memo.md`, `04-build-probe-run.md`,
+`05-review-checkpoint.md`) with the hotspot URL + engagement
+pre-filled. Open `02-pipeline-gate.yaml` to see the auto-filled
+`owner` (defaults to `agentflow-auto`) and `status: probe`.
+
+The Lark card from the same scan will include a `📝 自动 promote 了 N
+个 case` section + a `📝 promoted [N]` button linking back to the
+source URL, so you can spot the new cases without grepping the
+filesystem.
+
+### Disable promotion without uninstalling the schedule
+
+Edit the plist's `--scan-args` to drop `--auto-promote-apply` (keep
+`--auto-promote` for dry-run reporting only), or remove both flags
+entirely. Then re-run the same `agentflow-schedule install ...
+--apply --force` command above to push the change.

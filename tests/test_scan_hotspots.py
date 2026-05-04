@@ -8,12 +8,14 @@ from typing import Any
 import pytest
 import yaml
 
-from agentflow_pipeline import scan_hotspots
+from agentflow_pipeline import scan_hotspots, trends_diff
 from agentflow_pipeline.scan_hotspots import (
     ALL_SOURCES,
     DEFAULT_QUERIES,
     DEFAULT_SOURCES,
     _guess_lang_from_candidate,
+    _maybe_auto_promote,
+    _maybe_notify_lark,
     aggregate_scan_results,
     discover_shipped_repos,
     main,
@@ -1007,3 +1009,445 @@ def test_main_notify_lark_quiet_suppresses_lark_print(
     captured = capsys.readouterr()
     assert "[lark]" not in captured.out
     assert "[lark]" not in captured.err
+
+
+# --------------------------------------------------------------------------- #
+# --auto-promote integration on the CLI
+# --------------------------------------------------------------------------- #
+def _make_args(**overrides: Any):
+    """Build a Namespace mirroring ``register_scan_args`` defaults for promote.
+
+    We only need the auto-promote-relevant + ``quiet`` fields; helpers under
+    test exclusively read these via ``getattr(..., default)``.
+    """
+    import argparse
+
+    base = {
+        "auto_promote": False,
+        "auto_promote_apply": False,
+        "auto_promote_max": 1,
+        "auto_promote_min_engagement": 150,
+        "auto_promote_owner": "agentflow-auto",
+        "auto_promote_baseline_window": 14,
+        "quiet": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def _patch_trends_diff(
+    monkeypatch,
+    *,
+    history: list[dict] | None = None,
+    new_entries: list[dict] | None = None,
+    promote_results: list[dict] | None = None,
+    raise_in_history: BaseException | None = None,
+) -> dict:
+    """Monkeypatch the three trends_diff entry points used by promote.
+
+    Returns a ``dict`` of capture lists (``history_calls``, ``detect_calls``,
+    ``promote_calls``) so individual tests can assert call counts / kwargs.
+    """
+    captures: dict[str, list] = {
+        "history_calls": [],
+        "detect_calls": [],
+        "promote_calls": [],
+    }
+
+    def fake_load_scan_history(trends_dir, *, limit=None):
+        captures["history_calls"].append({"trends_dir": trends_dir, "limit": limit})
+        if raise_in_history is not None:
+            raise raise_in_history
+        return list(history or [])
+
+    def fake_detect_new_entries(latest, baseline_window, *, min_engagement=50):
+        captures["detect_calls"].append(
+            {
+                "latest": latest,
+                "baseline_window": baseline_window,
+                "min_engagement": min_engagement,
+            }
+        )
+        return list(new_entries or [])
+
+    promote_iter = iter(promote_results or [])
+
+    def fake_promote_to_case(
+        entry,
+        *,
+        root,
+        owner="",
+        project_shape="data_pipeline",
+        dry_run=True,
+        scaffold_callable=None,
+    ):
+        captures["promote_calls"].append(
+            {
+                "entry": entry,
+                "root": root,
+                "owner": owner,
+                "project_shape": project_shape,
+                "dry_run": dry_run,
+            }
+        )
+        try:
+            return next(promote_iter)
+        except StopIteration:
+            return {
+                "hotspot_id": "HSP-AUTO",
+                "hotspot_name": entry.get("title") or entry.get("name") or "?",
+                "case_dir": "" if dry_run else "/fake/case/dir",
+                "argv": [
+                    "--root", str(root),
+                    "--hotspot-name", entry.get("title") or entry.get("name") or "x",
+                ],
+                "dry_run": dry_run,
+                "returncode": None,
+            }
+
+    monkeypatch.setattr(trends_diff, "load_scan_history", fake_load_scan_history)
+    monkeypatch.setattr(trends_diff, "detect_new_entries", fake_detect_new_entries)
+    monkeypatch.setattr(trends_diff, "promote_to_case", fake_promote_to_case)
+    return captures
+
+
+def test_maybe_auto_promote_no_flag_returns_empty_and_skips_trends_diff(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Without ``--auto-promote``, the helper must be a no-op."""
+    captures = _patch_trends_diff(monkeypatch)
+    args = _make_args(auto_promote=False)
+
+    result = _maybe_auto_promote(args, {"top": []}, tmp_path)
+
+    assert result == []
+    assert captures["history_calls"] == []
+    assert captures["detect_calls"] == []
+    assert captures["promote_calls"] == []
+    out = capsys.readouterr().out
+    assert "[promote]" not in out
+
+
+def test_maybe_auto_promote_insufficient_history_returns_empty_with_msg(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """1-scan history is not enough to define 'new' — must skip with message."""
+    history = [{"path": tmp_path / "a", "scanned_at": "2026-05-01-10", "scan_data": {"top": []}}]
+    captures = _patch_trends_diff(monkeypatch, history=history)
+    args = _make_args(auto_promote=True)
+
+    result = _maybe_auto_promote(args, {"top": []}, tmp_path)
+
+    assert result == []
+    # detect/promote must NOT be called when history is too thin.
+    assert captures["detect_calls"] == []
+    assert captures["promote_calls"] == []
+    out = capsys.readouterr().out
+    assert "need >=2" in out
+
+
+def test_maybe_auto_promote_no_entries_above_threshold_returns_empty(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """detect_new_entries returns nothing -> helper returns [] cleanly."""
+    history = [
+        {"path": tmp_path / "a", "scanned_at": "2026-05-01-10", "scan_data": {"top": []}},
+        {"path": tmp_path / "b", "scanned_at": "2026-05-01-09", "scan_data": {"top": []}},
+    ]
+    captures = _patch_trends_diff(monkeypatch, history=history, new_entries=[])
+    args = _make_args(auto_promote=True, auto_promote_min_engagement=200)
+
+    result = _maybe_auto_promote(args, {}, tmp_path)
+
+    assert result == []
+    # detect was called with the threshold from args.
+    assert len(captures["detect_calls"]) == 1
+    assert captures["detect_calls"][0]["min_engagement"] == 200
+    assert captures["promote_calls"] == []
+    out = capsys.readouterr().out
+    assert "no new entries above engagement=200" in out
+
+
+def test_maybe_auto_promote_dry_run_calls_promote_with_dry_run_true(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Default ``--auto-promote`` (no apply) must call promote_to_case dry."""
+    history = [
+        {"path": tmp_path / "a", "scanned_at": "2026-05-01-10", "scan_data": {"top": []}},
+        {"path": tmp_path / "b", "scanned_at": "2026-05-01-09", "scan_data": {"top": []}},
+    ]
+    new_entries = [
+        {
+            "title": "alice/hot-repo",
+            "url": "https://github.com/alice/hot-repo",
+            "engagement": 250,
+        }
+    ]
+    captures = _patch_trends_diff(
+        monkeypatch, history=history, new_entries=new_entries
+    )
+    args = _make_args(auto_promote=True, auto_promote_apply=False)
+
+    result = _maybe_auto_promote(args, {}, tmp_path)
+
+    assert len(result) == 1
+    promoted = result[0]
+    assert promoted["hotspot_name"] == "alice/hot-repo"
+    assert promoted["source_url"] == "https://github.com/alice/hot-repo"
+    # In dry-run mode the synthesized case_dir is a placeholder — never a real path.
+    assert promoted["case_dir"].startswith("<dry-run") or promoted["case_dir"] == ""
+
+    assert len(captures["promote_calls"]) == 1
+    pcall = captures["promote_calls"][0]
+    assert pcall["dry_run"] is True
+    assert pcall["owner"] == "agentflow-auto"
+    assert pcall["project_shape"] == "data_pipeline"
+
+    out = capsys.readouterr().out
+    assert "would-create (dry-run)" in out
+    assert "alice/hot-repo" in out
+
+
+def test_maybe_auto_promote_apply_passes_dry_run_false(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """``--auto-promote-apply`` must flip dry_run to False on promote_to_case."""
+    history = [
+        {"path": tmp_path / "a", "scanned_at": "2026-05-01-10", "scan_data": {"top": []}},
+        {"path": tmp_path / "b", "scanned_at": "2026-05-01-09", "scan_data": {"top": []}},
+    ]
+    new_entries = [
+        {
+            "title": "bob/new-tool",
+            "url": "https://github.com/bob/new-tool",
+            "engagement": 500,
+        }
+    ]
+    promote_results = [
+        {
+            "hotspot_id": "HSP-042",
+            "hotspot_name": "bob/new-tool",
+            "case_dir": str(tmp_path / "cases" / "HSP-042-x"),
+            "dry_run": False,
+            "returncode": 0,
+        }
+    ]
+    captures = _patch_trends_diff(
+        monkeypatch,
+        history=history,
+        new_entries=new_entries,
+        promote_results=promote_results,
+    )
+    args = _make_args(
+        auto_promote=True,
+        auto_promote_apply=True,
+        auto_promote_owner="alice",
+    )
+
+    result = _maybe_auto_promote(args, {}, tmp_path)
+
+    assert len(result) == 1
+    assert result[0]["hotspot_id"] == "HSP-042"
+    assert result[0]["case_dir"] == str(tmp_path / "cases" / "HSP-042-x")
+    assert captures["promote_calls"][0]["dry_run"] is False
+    assert captures["promote_calls"][0]["owner"] == "alice"
+    out = capsys.readouterr().out
+    assert "[promote] created:" in out
+    assert "HSP-042" in out
+
+
+def test_maybe_auto_promote_filters_out_already_shipped_urls(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Don't re-promote a hotspot whose URL is already a shipped case repo."""
+    # Set up a shipped case under <root>/cases so discover_shipped_repos finds it.
+    _write_case(
+        tmp_path,
+        case_dir="HSP-001-2026-04-29-already",
+        hotspot_id="HSP-001",
+        final_status="publish",
+        owner="alice",
+        repo_name="already-shipped",
+    )
+
+    history = [
+        {"path": tmp_path / "a", "scanned_at": "2026-05-01-10", "scan_data": {"top": []}},
+        {"path": tmp_path / "b", "scanned_at": "2026-05-01-09", "scan_data": {"top": []}},
+    ]
+    new_entries = [
+        # Already shipped — must be filtered out.
+        {
+            "title": "alice/already-shipped",
+            "url": "https://github.com/alice/already-shipped",
+            "engagement": 999,
+        },
+        # New — must be promoted.
+        {
+            "title": "carol/fresh-thing",
+            "url": "https://github.com/carol/fresh-thing",
+            "engagement": 200,
+        },
+    ]
+    captures = _patch_trends_diff(
+        monkeypatch, history=history, new_entries=new_entries
+    )
+    # max=5 so the cap doesn't mask the filter behaviour.
+    args = _make_args(auto_promote=True, auto_promote_max=5)
+
+    result = _maybe_auto_promote(args, {}, tmp_path)
+
+    assert len(result) == 1
+    assert result[0]["source_url"] == "https://github.com/carol/fresh-thing"
+    # promote_to_case must have been called exactly once — for the unfiltered entry.
+    assert len(captures["promote_calls"]) == 1
+    assert (
+        captures["promote_calls"][0]["entry"]["url"]
+        == "https://github.com/carol/fresh-thing"
+    )
+
+
+def test_maybe_auto_promote_caps_at_auto_promote_max(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """detect returns 5 entries; --auto-promote-max=1 must promote only 1."""
+    history = [
+        {"path": tmp_path / "a", "scanned_at": "2026-05-01-10", "scan_data": {"top": []}},
+        {"path": tmp_path / "b", "scanned_at": "2026-05-01-09", "scan_data": {"top": []}},
+    ]
+    new_entries = [
+        {
+            "title": f"owner/repo-{i}",
+            "url": f"https://github.com/owner/repo-{i}",
+            "engagement": 300 + i,
+        }
+        for i in range(5)
+    ]
+    captures = _patch_trends_diff(
+        monkeypatch, history=history, new_entries=new_entries
+    )
+    args = _make_args(auto_promote=True, auto_promote_max=1)
+
+    result = _maybe_auto_promote(args, {}, tmp_path)
+
+    assert len(result) == 1
+    # Order from detect_new_entries is preserved — first entry wins.
+    assert result[0]["source_url"] == "https://github.com/owner/repo-0"
+    assert len(captures["promote_calls"]) == 1
+
+
+def test_maybe_auto_promote_swallows_trends_diff_exception(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """A trends_diff failure must NEVER propagate — scan must keep exit 0."""
+    _patch_trends_diff(
+        monkeypatch, raise_in_history=RuntimeError("disk on fire")
+    )
+    args = _make_args(auto_promote=True)
+
+    result = _maybe_auto_promote(args, {}, tmp_path)
+
+    assert result == []
+    captured = capsys.readouterr()
+    assert "[promote] failed (caught" in captured.err
+    assert "disk on fire" in captured.err
+
+
+def test_maybe_notify_lark_forwards_promoted_cases_kwarg(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """``promoted_cases`` arg must reach notify_scan_complete as auto_promoted_cases."""
+    spy = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    sentinel_cases = [
+        {
+            "hotspot_id": "HSP-AUTO-1",
+            "hotspot_name": "carol/fresh-thing",
+            "case_dir": str(tmp_path / "cases" / "HSP-AUTO-1"),
+            "source_url": "https://github.com/carol/fresh-thing",
+        }
+    ]
+    args = _make_args(
+        notify_lark=True,
+        lark_dry_run=True,
+        lark_framework_repo_url="https://example.com/framework",
+        lark_trends_view_url_template="",
+        root=str(tmp_path),
+    )
+    aggregate = {
+        "scanned_at": "2026-05-01T10:00:00+00:00",
+        "unique_count": 0,
+        "by_source": {"github": 0, "hackernews": 0, "reddit": 0},
+        "top": [],
+        "output_dir": str(tmp_path / "trends" / "2026-05-01-10"),
+    }
+
+    _maybe_notify_lark(args, aggregate, tmp_path, promoted_cases=sentinel_cases)
+
+    assert len(spy.calls) == 1
+    call_kwargs = spy.calls[0]["kwargs"]
+    assert "auto_promoted_cases" in call_kwargs
+    assert call_kwargs["auto_promoted_cases"] == sentinel_cases
+    # And without an explicit promoted_cases arg, it defaults to [] (not omitted).
+    spy2 = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy2)
+    _maybe_notify_lark(args, aggregate, tmp_path)
+    assert spy2.calls[0]["kwargs"]["auto_promoted_cases"] == []
+
+
+def test_main_auto_promote_end_to_end_passes_promoted_to_lark(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Full main() wiring: --auto-promote + --notify-lark must thread the cases through."""
+    _stub_run_scan_io(monkeypatch)
+    monkeypatch.setattr(
+        scan_hotspots,
+        "default_run_command",
+        lambda cmd, cwd=None: _fake_gh_run(cmd, cwd),
+    )
+
+    # Make trends_diff produce one new entry that gets dry-run promoted.
+    new_entries = [
+        {
+            "title": "alice/demo",
+            "url": "https://github.com/alice/demo",
+            "engagement": 999,
+        }
+    ]
+    # We need at least 2 history entries -> patch load_scan_history to return 2.
+    fake_history = [
+        {"path": tmp_path / "x", "scanned_at": "2026-05-01-10", "scan_data": {"top": []}},
+        {"path": tmp_path / "y", "scanned_at": "2026-05-01-09", "scan_data": {"top": []}},
+    ]
+    _patch_trends_diff(
+        monkeypatch, history=fake_history, new_entries=new_entries
+    )
+
+    spy = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    rc = main(
+        [
+            "--queries",
+            "solana ai agent",
+            "--sources",
+            "github",
+            "--output-dir",
+            str(tmp_path / "trends"),
+            "--root",
+            str(tmp_path),
+            "--auto-promote",
+            "--notify-lark",
+            "--lark-dry-run",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    # promote line surfaced.
+    assert "[promote] would-create (dry-run)" in out
+    # and Lark spy got the promoted cases
+    assert len(spy.calls) == 1
+    promoted = spy.calls[0]["kwargs"]["auto_promoted_cases"]
+    assert isinstance(promoted, list)
+    assert len(promoted) == 1
+    assert promoted[0]["source_url"] == "https://github.com/alice/demo"
