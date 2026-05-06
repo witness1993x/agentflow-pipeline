@@ -1,12 +1,12 @@
 ---
 name: agentflow-pipeline
-description: End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by ChainStream (or pluggable) on-chain data sources. Use when the user wants to (a) scan real-time hotspots across GitHub trending / HackerNews / Reddit, (b) decide what on-chain data project to build next, (c) scaffold + write + probe + publish a new GitHub repo end-to-end, (d) install a twice-daily auto-scan scheduler, (e) diff trends history to find new or rising entries. Provides 6 console scripts (agentflow-init / agentflow-pipeline / agentflow-scaffold / agentflow-scan / agentflow-schedule / agentflow-trends), an 8-gate fail-closed publish safety check, multi-agent friendly architecture, and a swappable DataSourcePlugin protocol so non-ChainStream backends (Bitquery, custom) plug in trivially.
+description: End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by ChainStream (or pluggable) on-chain data sources. Use when the user wants to (a) scan real-time hotspots across GitHub trending / HackerNews / Reddit, (b) decide what on-chain data project to build next, (c) scaffold + write + probe + publish a new GitHub repo end-to-end, (d) install a twice-daily auto-scan scheduler, (e) diff trends history to find new or rising entries. Provides 8 console scripts (agentflow-init / agentflow-pipeline / agentflow-scaffold / agentflow-scan / agentflow-schedule / agentflow-trends / agentflow-tg-listen / agentflow-tg-notify), an 8-gate fail-closed publish safety check, multi-agent friendly architecture, and a swappable DataSourcePlugin protocol so non-ChainStream backends (Bitquery, custom) plug in trivially.
 ---
 
 # AgentFlow Pipeline
 
 This skill packages the `agentflow-pipeline` Python framework — a fully tested
-(339 pytest, 0.31s green) end-to-end machine for going from "what crypto/AI
+(480 pytest) end-to-end machine for going from "what crypto/AI
 project should I build next" to a public GitHub repo, with optional twice-daily
 hotspot auto-scan + trends diff.
 
@@ -26,17 +26,20 @@ Invoke this skill when the user asks any of:
 ## OpenClaw plugin compatibility
 
 This skill ships a sibling `openclaw.plugin.json` manifest so OpenClaw
-runtimes can list it as a plugin alongside `openclaw-lark` etc. The
-plugin declares two channels:
+runtimes can list AgentFlow as a skill/plugin alongside the official
+Lark/Feishu channel plugin. AgentFlow does **not** implement the Feishu
+channel itself.
 
-- `feishu` — Lark group cards via `LARK_WEBHOOK_URL` env
-- `telegram` — TG bot push + (optional) callback daemon
+For OpenClaw Lark App interaction, install and configure
+`@larksuite/openclaw-lark` (`openclaw-lark`). That plugin owns the
+Feishu/Lark App connection, inbound gateway, interactive cards,
+permissions, and allowlists. AgentFlow remains the Python framework that
+scans, promotes, stores case state, and exposes CLI/skill actions.
 
-When run **inside an OpenClaw runtime**, prefer routing notifications
-through the host's existing channel transport (e.g. let `openclaw-lark`
-post to the user's Lark workspace). When run **standalone**, the
-framework's bundled `lark_notifier` / `tg_notifier` modules POST to the
-respective bot APIs directly. Either mode reads the same env vars.
+When run **standalone**, the framework's bundled `lark_notifier` /
+`tg_notifier` modules can still POST to Lark Custom Bot webhooks and
+Telegram Bot APIs directly. Treat those as fallback transports, not as
+the OpenClaw Lark App integration path.
 
 See `openclaw.plugin.json` for the configSchema this plugin accepts.
 
@@ -49,9 +52,10 @@ The skill bundle ships the Python source in `bundle/`. To install:
 python3 -m venv ~/.agentflow-venv
 ~/.agentflow-venv/bin/pip install -e ~/.claude/skills/agentflow-pipeline/bundle
 source ~/.agentflow-venv/bin/activate
-# 6 console scripts now on PATH:
+# 8 console scripts now on PATH:
 #   agentflow-init  agentflow-pipeline  agentflow-scaffold
 #   agentflow-scan  agentflow-schedule  agentflow-trends
+#   agentflow-tg-listen  agentflow-tg-notify
 
 # Option 2: one-shot (no venv) — runs straight from the bundle
 python3 -m agentflow_pipeline.cli --help

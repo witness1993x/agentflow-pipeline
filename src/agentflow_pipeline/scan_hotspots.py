@@ -833,7 +833,10 @@ def register_scan_args(parser: argparse.ArgumentParser) -> None:
         "--notify-lark",
         action="store_true",
         default=False,
-        help="After scan, post a Lark card via LARK_WEBHOOK_URL env. No-op when env unset.",
+        help=(
+            "Standalone fallback: after scan, post a Lark Custom Bot card via "
+            "LARK_WEBHOOK_URL env. OpenClaw Lark App mode should use @larksuite/openclaw-lark."
+        ),
     )
     parser.add_argument(
         "--lark-trends-view-url-template",
@@ -849,7 +852,7 @@ def register_scan_args(parser: argparse.ArgumentParser) -> None:
         "--lark-cta-tg-bot",
         default="",
         help=(
-            "Optional Telegram bot username for promoted-case Lark CTAs. "
+            "Standalone fallback only: optional Telegram bot username for promoted-case Lark CTAs. "
             "When set, promoted buttons link to https://t.me/<bot>?start=case_<HSP>_dry_publish. "
             "Falls back to LARK_CTA_TG_BOT env when omitted."
         ),

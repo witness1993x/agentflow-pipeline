@@ -1,7 +1,7 @@
 # Handoff for Cursor — agentflow-pipeline
 
-**Last updated**: 2026-05-04 by Claude Opus 4.7 (1M context)
-**State**: v0.4.1 patch in progress; 477 pytest passing; Lark Custom Bot compatibility preserved while Lark→TG deep-link bridge is wired through CLI/env and the TG daemon handles `/start` payloads.
+**Last updated**: 2026-05-06 by Cursor
+**State**: v0.4.2 patch in progress; 480 pytest passing; OpenClaw Lark App integration is corrected to use the official `@larksuite/openclaw-lark` Feishu channel plugin. AgentFlow remains a Python skill/framework with standalone webhook/TG fallback transports.
 
 ---
 
@@ -11,11 +11,11 @@ The framework is now a **fully functional Claude Code / OpenClaw skill** that:
 
 1. **Scans** crypto/AI hotspots from GitHub + HackerNews + Reddit on a daily 10:00 launchd timer
 2. **Auto-promotes** newly-discovered high-engagement entries into case scaffolds (level-B half-automation, no code generation, no publish)
-3. **Notifies** results to **both Lark and Telegram** with template-driven cards (user-customizable via `templates/notifications/*.tpl`)
+3. **Notifies** results via standalone Lark webhook / Telegram fallback, or via OpenClaw's official Lark App channel when `@larksuite/openclaw-lark` is installed
 4. **Receives interactive callbacks** from Telegram (long-poll daemon) — clicking inline buttons triggers framework actions: `dry-publish`, `write-stub`, `drop`, `snooze`
-5. **Ships as a single skill zip** that OpenClaw can list as a plugin (alongside `openclaw-lark`)
+5. **Ships as a single skill zip** that OpenClaw can list as an AgentFlow skill/plugin alongside the official Lark channel plugin
 
-What remains: commit/push the v0.4.1 patch and publish a GitHub release once the operator approves.
+What remains: commit/push the v0.4.2 patch and publish a GitHub release once verified.
 
 ---
 
@@ -23,8 +23,8 @@ What remains: commit/push the v0.4.1 patch and publish a GitHub release once the
 
 **Repo**: https://github.com/witness1993x/agentflow-pipeline
 **Local path**: `/Users/witness/Desktop/experimental/agentflow-git-repo-clone`
-**Last published release**: v0.4.0 (Lark + TG dual-channel + interactive callbacks + OpenClaw plugin)
-**Pending release**: v0.4.1 (Lark compatibility patch + Lark→TG bridge completion)
+**Last published release**: v0.4.1 (standalone Lark webhook compatibility + TG deep-link bridge)
+**Pending release**: v0.4.2 (OpenClaw Lark App alignment via official `@larksuite/openclaw-lark`)
 
 ### Test count history
 
@@ -33,7 +33,9 @@ What remains: commit/push the v0.4.1 patch and publish a GitHub release once the
 | v0.1.0 | 270 | namespace package, 3 console scripts |
 | v0.2.0 | 371 | + Lark webhook outbound |
 | v0.3.0 | 386 | + level-B auto-promote |
-| **v0.4.0-rc1** | **471** | + tg_notifier + tg_callback_listener + case_actions + notification_templates + install.sh + openclaw.plugin.json |
+| v0.4.0 | 471 | + tg_notifier + tg_callback_listener + case_actions + notification_templates + install.sh + openclaw.plugin.json |
+| v0.4.1 | 477 | standalone Lark webhook compatibility + TG `/start` deep-link bridge |
+| **v0.4.2** | **480** | OpenClaw Lark App alignment via official `@larksuite/openclaw-lark` |
 
 ### Current working-tree changes (uncommitted)
 
@@ -69,7 +71,7 @@ M  tests/test_schedule_installer.py                 # +3 daemon tests
 ### L1 — `install.sh` + OpenClaw manifest
 
 - `/install.sh` (chmod +x, ~370 lines bash) — 9-stage idempotent installer: pre-flight → venv → `pip install -e` → verify console scripts → detect OpenClaw skill mode → Lark `.env` setup → optional TG → launchd install → final report
-- `/openclaw.plugin.json` + `/skill/openclaw.plugin.json` (mirrored) — declares `channels: ["feishu", "telegram"]`, `skills: ["./skill"]`, full `configSchema` for OpenClaw to render config UI
+- `/openclaw.plugin.json` + `/skill/openclaw.plugin.json` (mirrored) — declares AgentFlow as a skill/plugin (`skills: ["./skill"]`) and intentionally does **not** claim Feishu channel ownership; OpenClaw Lark App mode requires the official `@larksuite/openclaw-lark` companion plugin
 - README has new `## One-shot install` section
 
 ### L2 — `notification_templates` abstraction
@@ -116,7 +118,7 @@ M  tests/test_schedule_installer.py                 # +3 daemon tests
 - linux daemon: `Type=simple / Restart=on-failure`, no timer
 - `build_default_listener_spec()` for `agentflow-tg-listen`
 - `/scripts/install_tg_listener.sh` (chmod +x) — turn-key TG daemon installer
-- README: new `## TG callback (interactive HITL)` section (4 button semantics + Setup + Lark→TG deep link bridge + Security model)
+- README: `## Lark / Feishu integration` now separates OpenClaw Lark App mode from standalone webhook/TG fallback; `## TG callback (interactive HITL)` covers standalone Telegram actions
 - `scripts/install_schedule.md`: `## TG callback daemon (interactive)` section (full plist sample + KeepAlive dict + launchctl setenv gotcha + verify + uninstall)
 - `.env.lark.example`: TG block (4 env vars + comments)
 - 3 new pytest
@@ -208,23 +210,23 @@ grep "agentflow-tg" pyproject.toml
 - Args: `--notify-lark --auto-promote --auto-promote-apply --auto-promote-max 1 --auto-promote-min-engagement 150`
 - Lark env injected via `launchctl setenv LARK_WEBHOOK_URL ...` (will need re-injection on reboot)
 
-**Lark webhook**: configured in `.env` (LARK_WEBHOOK_URL set, KEYWORDS=AgentFlow,热点扫描). Real cards have been posted successfully (3 confirmed).
+**Lark integration**: standalone webhook fallback is configured in `.env` (`LARK_WEBHOOK_URL` set, KEYWORDS=AgentFlow,热点扫描). OpenClaw Lark App mode must be configured through the official `@larksuite/openclaw-lark` Feishu channel (`channels.feishu`) rather than AgentFlow's Python webhook module.
 
 **TG daemon**: NOT yet installed. User needs to:
 1. Create TG bot via @BotFather
 2. Add bot to a group + send `/start`
 3. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CALLBACK_SECRET` in `.env`
 4. Run `bash scripts/install_tg_listener.sh --apply`
-5. Lark cards can deep-link to TG via `--lark-cta-tg-bot @bot_username` or `LARK_CTA_TG_BOT`; the promoted button becomes `https://t.me/<bot>?start=case_HSP-XXX_dry_publish`, and `agentflow-tg-listen` handles that `/start` payload.
+5. In standalone mode, Lark Custom Bot cards can deep-link to TG via `--lark-cta-tg-bot @bot_username` or `LARK_CTA_TG_BOT`. In OpenClaw mode, prefer `@larksuite/openclaw-lark` interactive cards and permission policy.
 
 ---
 
 ## Outstanding integration TODOs (for cursor or next claude)
 
-1. **Done after v0.4.0**: `agentflow-tg-notify` entry script exists in pyproject.toml.
-2. **Done after v0.4.0**: `--lark-cta-tg-bot @username` and `LARK_CTA_TG_BOT` are wired through `scan_hotspots` → `lark_notifier.notify_scan_complete()`, and `agentflow-tg-listen` handles the resulting `/start case_HSP-XXX_dry_publish` message.
-3. **Bump version to 0.4.0** in `pyproject.toml` (currently 0.3.0)
-4. **Update README badges** tests/version (currently 386 / 0.3.0 → should be 471 / 0.4.0)
+1. **Done in v0.4.1**: `agentflow-tg-notify` entry script exists in pyproject.toml.
+2. **Done in v0.4.1**: `--lark-cta-tg-bot @username` and `LARK_CTA_TG_BOT` are wired for standalone webhook/TG fallback.
+3. **v0.4.2 TODO**: keep AgentFlow out of Feishu channel ownership and document official `@larksuite/openclaw-lark` as the OpenClaw Lark App integration path.
+4. **v0.4.2 TODO**: bump version + README badges after tests.
 5. **Rebuild skill zip** with all new files (run from framework root):
    ```bash
    rm -rf skill/bundle/src skill/bundle/scripts skill/bundle/templates
@@ -236,7 +238,7 @@ grep "agentflow-tg" pyproject.toml
    find skill/bundle -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
    find skill/bundle -name '*.pyc' -delete 2>/dev/null
    rm -rf skill/bundle/src/agentflow_pipeline.egg-info
-   ZIP=dist/agentflow-pipeline-skill-v0.4.0.zip
+   ZIP=dist/agentflow-pipeline-skill-v0.4.2.zip
    ZIP_LATEST=dist/agentflow-pipeline-skill.zip
    rm -f $ZIP $ZIP_LATEST
    ( cd skill && zip -rq ../$ZIP . -x '*.pyc' '__pycache__/*' '*/__pycache__/*' '.DS_Store' '*/.DS_Store' )
@@ -249,22 +251,22 @@ grep "agentflow-tg" pyproject.toml
    git diff --cached --name-only | xargs grep -lE "[0-9]{8,12}:[A-Za-z0-9_-]{30,}" 2>/dev/null  # TG bot token pattern
    # both should be empty
    ```
-7. **Commit + push + GitHub release v0.4.0**:
+7. **Commit + push + GitHub release v0.4.2**:
    ```bash
-   git add . && git commit -m "v0.4.0: Lark + TG dual-channel + interactive callbacks + OpenClaw plugin
+   git add . && git commit -m "v0.4.2: align OpenClaw Lark App integration
 
    Major:
    - tg_notifier (outbound), tg_callback_listener (daemon), case_actions (4 handlers)
    - notification_templates abstraction (Lark + TG, user-customizable .tpl)
    - schedule_installer daemon mode (RunAtLoad + KeepAlive for tg-listener)
    - install.sh one-shot installer (9-stage idempotent)
-   - openclaw.plugin.json manifest (channels: feishu, telegram)
+   - openclaw.plugin.json manifest no longer claims Feishu channel ownership
 
    Tests: 471 passing (baseline 386 + L1=0 + L2=20 + L3=27 + L4=16 + L5=19 + L6=3)"
    git push origin main
-   gh release create v0.4.0 dist/agentflow-pipeline-skill-v0.4.0.zip dist/agentflow-pipeline-skill.zip \
+   gh release create v0.4.2 dist/agentflow-pipeline-skill-v0.4.2.zip dist/agentflow-pipeline-skill.zip \
      --repo witness1993x/agentflow-pipeline \
-     --title "v0.4.0 — Lark + TG dual-channel + interactive callbacks" \
+     --title "v0.4.2 — OpenClaw Lark App alignment" \
      --notes "..." # see PROGRESS.md or this handoff for content
    ```
 8. **Optional smoke verify** after push (no real install of TG daemon, just dry-run):
@@ -303,32 +305,32 @@ cd /Users/witness/Desktop/experimental/agentflow-git-repo-clone
 
 # 1. Verify everything still passes
 python3 -m pytest tests/ -q
-# Expected: 477 passed
+# Expected: 480 passed
 
-# 2. Rebuild skill zip for v0.4.1
+# 2. Rebuild skill zip for v0.4.2
 mkdir -p dist
-ZIP=dist/agentflow-pipeline-skill-v0.4.1.zip
+ZIP=dist/agentflow-pipeline-skill-v0.4.2.zip
 ZIP_LATEST=dist/agentflow-pipeline-skill.zip
 rm -f "$ZIP" "$ZIP_LATEST"
 ( cd skill && zip -rq "../$ZIP" . -x '*.pyc' '__pycache__/*' '*/__pycache__/*' '.DS_Store' '*/.DS_Store' )
 cp "$ZIP" "$ZIP_LATEST"
 
-# 3. Commit + push + create GitHub release v0.4.1 after operator approval
+# 3. Commit + push + create GitHub release v0.4.2 after verification
 
 # 4. Verify release downloadable:
-curl -sL -o /tmp/test.zip https://github.com/witness1993x/agentflow-pipeline/releases/download/v0.4.1/agentflow-pipeline-skill.zip
+curl -sL -o /tmp/test.zip https://github.com/witness1993x/agentflow-pipeline/releases/download/v0.4.2/agentflow-pipeline-skill.zip
 unzip -l /tmp/test.zip | grep -E "(tg_notifier|tg_callback|case_actions|notification_templates|install\.sh|openclaw\.plugin\.json)" | wc -l
 # Expected: ≥6 (one match per new file in zip)
 ```
 
 ---
 
-## Future work (not blocking v0.4.1)
+## Future work (not blocking v0.4.2)
 
 These are ideas users have hinted at but haven't requested yet:
 
 - **Phase C (full auto-ship)**: scan → LLM-generate full repo skeleton → auto-publish with 24h abort window. High risk; deferred indefinitely.
-- **Lark self-built application real callback** (vs custom-bot push-only). Requires Lark workspace app registration + HTTPS endpoint. Currently all interactivity routes through TG via Lark→TG deep link.
+- **AgentFlow-specific OpenClaw channel plugin** only if the official `@larksuite/openclaw-lark` channel cannot cover a future workflow. Current v0.4.2 direction is to reuse the official channel.
 - **PyPI publish** for `pip install agentflow-pipeline` (currently editable-install only).
 - **Browser dashboard** for trends/case state (currently markdown + yaml files only).
 - **Cross-source intelligence**: when same hotspot appears in github + hn + reddit simultaneously, boost confidence; track which sources predict eventual winners.
@@ -356,6 +358,6 @@ Cursor: read MEMORY.md for the index, then specific files as needed.
 
 ## Contact / context for cursor
 
-User identity: witness1993x on GitHub, mobius0083x on email. Lark webhook configured in `.env` (don't echo it). TG bot not yet created. User's stated next step after v0.4.0 ships: install TG daemon and try the interactive callback flow end-to-end.
+User identity: witness1993x on GitHub, mobius0083x on email. Lark webhook configured in `.env` (don't echo it). TG bot not yet created. For OpenClaw Lark App mode, configure the official `@larksuite/openclaw-lark` plugin instead of adding Feishu channel code to AgentFlow.
 
 If you encounter sandbox denials trying to launchctl/install/git push, that's expected — explicit user authorization required for those (ask in chat).

@@ -1,4 +1,4 @@
-"""Lark Custom Bot webhook notifier (stdlib-only port).
+"""Standalone Lark Custom Bot webhook notifier (stdlib-only port).
 
 Outbound-only push notifier for the AgentFlow framework. Designed to be
 the receiver of the ``agentflow-scan`` cron pipeline: once the daily scan
@@ -29,6 +29,10 @@ Configuration (env-driven, opt-in — empty URL = silent skip):
   deferral.
 * ``LARK_WEBHOOK_DRY_RUN`` — set to ``true`` to skip the network call
   globally (returns a structured ``LarkSendResult`` plan).
+
+OpenClaw note: real Lark App / Feishu channel interaction is owned by
+the official ``@larksuite/openclaw-lark`` plugin. This module is kept as
+a standalone webhook fallback for cron jobs and non-OpenClaw hosts.
 """
 from __future__ import annotations
 

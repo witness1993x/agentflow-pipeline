@@ -1,9 +1,9 @@
 {
   "id": "agentflow-pipeline",
   "name": "AgentFlow Pipeline",
-  "version": "0.3.0",
-  "description": "Hotspot → GitHub → ChainStream pipeline framework with Lark/TG notifications and auto-promote.",
-  "channels": ["feishu", "telegram"],
+  "version": "0.4.2",
+  "description": "Hotspot → GitHub → data-source pipeline framework. Standalone mode provides webhook/TG notification fallback; OpenClaw Lark App integration requires the official @larksuite/openclaw-lark Feishu channel plugin.",
+  "channels": [],
   "skills": ["./skill"],
   "configSchema": {
     "type": "object",
@@ -31,32 +31,21 @@
         "type": "array",
         "items": { "type": "string" },
         "default": ["github", "hackernews"]
+      },
+      "lark_integration_mode": {
+        "type": "string",
+        "enum": ["standalone_webhook", "openclaw_lark_channel"],
+        "default": "standalone_webhook",
+        "description": "standalone_webhook uses LARK_WEBHOOK_URL fallback; openclaw_lark_channel delegates Lark App messaging and interactive cards to the official @larksuite/openclaw-lark plugin."
+      },
+      "openclaw_lark_plugin": {
+        "type": "string",
+        "default": "@larksuite/openclaw-lark",
+        "description": "Companion OpenClaw Feishu/Lark channel plugin required for Lark App mode."
       }
     }
   },
-  "channelConfigs": {
-    "feishu": {
-      "schema": {
-        "type": "object",
-        "properties": {
-          "webhook_url_env": { "type": "string", "default": "LARK_WEBHOOK_URL" },
-          "secret_env": { "type": "string", "default": "LARK_WEBHOOK_SECRET" },
-          "keywords_env": { "type": "string", "default": "LARK_WEBHOOK_KEYWORDS" },
-          "brand_prefix_env": { "type": "string", "default": "LARK_WEBHOOK_BRAND_PREFIX" }
-        }
-      }
-    },
-    "telegram": {
-      "schema": {
-        "type": "object",
-        "properties": {
-          "bot_token_env": { "type": "string", "default": "TELEGRAM_BOT_TOKEN" },
-          "chat_id_env": { "type": "string", "default": "TELEGRAM_CHAT_ID" },
-          "callback_secret_env": { "type": "string", "default": "TELEGRAM_CALLBACK_SECRET" }
-        }
-      }
-    }
-  },
+  "channelConfigs": {},
   "entryPoints": {
     "scan":     { "command": "agentflow-scan",     "description": "One-shot multi-source hotspot scan" },
     "scaffold": { "command": "agentflow-scaffold", "description": "Generate a new case skeleton" },

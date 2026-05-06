@@ -2,9 +2,9 @@
 
 **End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by [ChainStream](https://chainstream.io) (or pluggable) on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-477%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.1-blue)]()
+[![tests](https://img.shields.io/badge/tests-480%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.2-blue)]()
 
-> Why this exists: the path from "I noticed Pump.fun radars are trending" to "a public GitHub repo doing something useful with that signal" usually involves 30+ disconnected manual steps — gh search, HN scraping, Reddit scraping, dedup, market analysis, scaffold, write, npm/pip install, build, test, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 6 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer.
+> Why this exists: the path from "I noticed Pump.fun radars are trending" to "a public GitHub repo doing something useful with that signal" usually involves 30+ disconnected manual steps — gh search, HN scraping, Reddit scraping, dedup, market analysis, scaffold, write, npm/pip install, build, test, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 8 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer.
 >
 > Battle-tested on three real shipped repos (links below).
 
@@ -69,7 +69,7 @@ bash scripts/install_schedule.sh --apply
 - **Trends diff**: `agentflow-trends diff` finds new / rising entries across scan history, optionally `promote --apply` straight into a new case
 - **Post-publish scaffolding**: CI workflow + ISSUE/PR templates + CODEOWNERS + RUNBOOK + MONITORING + README badges all rendered into the freshly created repo
 - **Real monitoring hooks** (opt-in): `gh secret set` + branch protection + dependabot + Grafana dashboard + PagerDuty service; all default to dry-run; `integration_key` redacted in logs / state
-- **339 pytest, 0 flaky, all offline** (no network calls in tests)
+- **480 pytest, 0 flaky, all offline** (no network calls in tests)
 
 ## Real shipped reference repos
 
@@ -93,9 +93,48 @@ Default: 09:00 + 21:00 local time, label `com.agentflow.scan.daily` (macOS) / `a
 
 See [`scripts/install_schedule.md`](scripts/install_schedule.md) for the macOS PATH gotcha, custom times, and systemd setup details.
 
-## Lark notifications (optional)
+## Lark / Feishu integration
 
-After every `agentflow-scan` run, optionally post a summary card to a Lark / Feishu group:
+AgentFlow supports two Lark paths with different ownership boundaries:
+
+- **OpenClaw Lark App mode (recommended for OpenClaw)**: install and configure
+  the official [`@larksuite/openclaw-lark`](https://github.com/larksuite/openclaw-lark)
+  channel plugin. It owns the Lark App connection, message gateway,
+  interactive cards, permissions, and allowlists. AgentFlow remains the Python
+  skill / CLI that scans, promotes, and handles case actions.
+- **Standalone webhook fallback**: when running outside OpenClaw,
+  `agentflow-scan --notify-lark` can still post a one-way Lark Custom Bot card
+  through `LARK_WEBHOOK_URL`.
+
+### OpenClaw Lark App mode
+
+Use this when you want real Lark App interaction instead of a webhook-only bot.
+Install/configure the official OpenClaw plugin first, then install AgentFlow as
+a companion skill:
+
+```bash
+# Requirements from the official plugin:
+# - Node.js >= 22
+# - OpenClaw >= 2026.2.26
+npm install -g openclaw
+openclaw plugins install npm:@larksuite/openclaw-lark
+
+# Then install AgentFlow skill zip as usual.
+curl -L -o /tmp/agentflow-skill.zip \
+  https://github.com/witness1993x/agentflow-pipeline/releases/latest/download/agentflow-pipeline-skill.zip
+unzip /tmp/agentflow-skill.zip -d ~/.claude/skills/agentflow-pipeline
+```
+
+Configure the Lark App credentials, connection mode, and allowlists in
+OpenClaw's `channels.feishu` config. In this mode AgentFlow does **not** claim
+to provide a Feishu channel; OpenClaw routes Lark messages/cards through
+`@larksuite/openclaw-lark`, and AgentFlow provides the skill commands and case
+state the agent operates on.
+
+### Standalone webhook fallback
+
+After every `agentflow-scan` run, optionally post a summary card to a Lark /
+Feishu group through a Lark Custom Bot webhook:
 
 ```bash
 cp .env.lark.example .env
@@ -126,11 +165,10 @@ framework action **without leaving the chat**:
 - **`🚮 drop`** — marks the case `final_status=drop` + appends review log
 - **`💤 snooze 7d`** — pushes `next_review_date` forward 7 days
 
-Lark Custom Bot is push-only (its inline buttons can't trigger
-callbacks back to the framework), so the same buttons posted to Lark
-become **deep links into Telegram** that pre-fire the action. The
-long-running `agentflow-tg-listen` daemon (installed below) receives
-those clicks and dispatches them to the same `case_actions` handlers.
+In OpenClaw Lark App mode, use the official `openclaw-lark` channel for real
+Lark card interaction and permission policy. The Telegram listener below is a
+standalone fallback for deployments that do not run OpenClaw's Lark App
+channel.
 
 ### Setup (one-time)
 
@@ -163,17 +201,17 @@ launchctl list | grep tg-listener        # macOS
 systemctl --user status com.agentflow.tg-listener.service  # linux
 ```
 
-### Lark → TG deep link bridge
+### Standalone Lark → TG deep link bridge
 
-Lark Custom Bot is push-only — buttons can't trigger callbacks. To get
-interactivity from Lark, configure the daily scan with
+Lark Custom Bot is push-only — buttons can't trigger callbacks. Outside
+OpenClaw, configure the daily scan with
 `--lark-cta-tg-bot @your_bot_username`: the auto-promoted-cases button
 on the Lark card will become a deep link
 `https://t.me/your_bot?start=case_HSP-XXX_dry_publish`. The
 `agentflow-tg-listen` daemon handles that `/start` payload and dispatches
 the same case action as an inline TG button. This way Lark stays as the
 high-signal push channel while interactive HITL flows through the TG
-daemon.
+daemon. This is not a replacement for the OpenClaw Lark App channel.
 
 For existing Lark schedules, you can set `LARK_CTA_TG_BOT=@your_bot_username`
 instead of changing `--scan-args`. When neither the flag nor env var is set,
@@ -329,7 +367,7 @@ src/agentflow_pipeline/
 └── templates/                      # case scaffolding + post-publish templates
 ```
 
-339 pytest covering every module, 0.31s end-to-end, zero network calls.
+480 pytest covering every module, zero network calls.
 
 ## License
 

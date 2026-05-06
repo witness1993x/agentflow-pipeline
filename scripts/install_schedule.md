@@ -270,7 +270,32 @@ bash scripts/install_schedule.sh [options]
   -h, --help        show help
 ```
 
-## Lark notification (optional)
+## Lark / Feishu integration
+
+AgentFlow has two Lark integration modes:
+
+- **OpenClaw Lark App mode**: install/configure the official
+  `@larksuite/openclaw-lark` plugin. It provides the Feishu channel, Lark App
+  gateway, interactive cards, permission policies, and allowlists. AgentFlow is
+  only the skill/CLI that scans and manages case state.
+- **Standalone webhook fallback**: `agentflow-scan ... --notify-lark` posts a
+  one-way Lark Custom Bot card via `LARK_WEBHOOK_URL`.
+
+### OpenClaw Lark App mode
+
+Use OpenClaw's Feishu channel config for Lark App credentials and security:
+
+```bash
+npm install -g openclaw
+openclaw plugins install npm:@larksuite/openclaw-lark
+openclaw feishu-diagnose
+```
+
+Do not configure AgentFlow as a Feishu channel provider. Its
+`openclaw.plugin.json` intentionally declares no channel capability; it should
+be installed alongside `openclaw-lark`.
+
+### Standalone Lark webhook fallback
 
 The default scan job (`agentflow-scan ... --notify-lark`) can post a Lark card after every
 scan. The card includes:
@@ -623,13 +648,13 @@ bash scripts/install_tg_listener.sh [options]
   -h, --help                        show this help
 ```
 
-### Lark → TG deep link bridge
+### Standalone Lark → TG deep link bridge
 
 Lark Custom Bot is push-only — its inline buttons cannot trigger
 callbacks back to the framework. To preserve interactivity end-to-
 end while keeping Lark as the primary "look at this" channel, the
 framework rewrites the same set of buttons into Telegram **deep
-links** when posting to Lark:
+links** when posting to Lark outside OpenClaw:
 
 ```
 [📊 dry-publish] → https://t.me/<bot_username>?start=case_HSP-042_dry_publish
@@ -661,4 +686,5 @@ For an already-installed Lark schedule, you can also set
 `LARK_CTA_TG_BOT=@your_bot_username` in the launchd / systemd environment
 and leave the existing `--scan-args "--notify-lark"` untouched. If neither
 the flag nor env var is set, the promoted button keeps the legacy
-`source_url` behavior.
+`source_url` behavior. In OpenClaw Lark App mode, prefer
+`@larksuite/openclaw-lark` interactive cards instead of this fallback bridge.
