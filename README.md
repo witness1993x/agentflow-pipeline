@@ -2,7 +2,7 @@
 
 **End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by [ChainStream](https://chainstream.io) (or pluggable) on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-471%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.0-blue)]()
+[![tests](https://img.shields.io/badge/tests-477%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.1-blue)]()
 
 > Why this exists: the path from "I noticed Pump.fun radars are trending" to "a public GitHub repo doing something useful with that signal" usually involves 30+ disconnected manual steps — gh search, HN scraping, Reddit scraping, dedup, market analysis, scaffold, write, npm/pip install, build, test, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 6 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer.
 >
@@ -168,18 +168,28 @@ systemctl --user status com.agentflow.tg-listener.service  # linux
 Lark Custom Bot is push-only — buttons can't trigger callbacks. To get
 interactivity from Lark, configure the daily scan with
 `--lark-cta-tg-bot @your_bot_username`: the auto-promoted-cases button
-on the Lark card will become a deep link `https://t.me/your_bot?start=…`
-that opens the TG chat with a pre-fired action. This way Lark stays as
-the high-signal push channel while interactive HITL flows through the
-TG daemon.
+on the Lark card will become a deep link
+`https://t.me/your_bot?start=case_HSP-XXX_dry_publish`. The
+`agentflow-tg-listen` daemon handles that `/start` payload and dispatches
+the same case action as an inline TG button. This way Lark stays as the
+high-signal push channel while interactive HITL flows through the TG
+daemon.
+
+For existing Lark schedules, you can set `LARK_CTA_TG_BOT=@your_bot_username`
+instead of changing `--scan-args`. When neither the flag nor env var is set,
+Lark cards keep the legacy source-url promoted button.
 
 ### Security model
 
 Always set `TELEGRAM_CALLBACK_SECRET` (a random ≥16-char string injected
 into every `callback_data`). The daemon ignores any callback whose data
 doesn't start with the secret prefix, blocking spoofed callbacks.
-Combine with `--chat-id-allowlist "id1,id2"` to lock the daemon to
-specific chats:
+For Lark deep links, also keep `TELEGRAM_CHAT_ID` / `--chat-id-allowlist`
+configured: `/start` payloads are visible URLs, so chat allowlisting is
+the trust boundary for those actions. `install_tg_listener.sh` uses
+`TELEGRAM_CHAT_ID` as the default allowlist; pass
+`--chat-id-allowlist "group_id,user_id"` when you need both group
+callbacks and private deep-link clicks:
 
 ```bash
 bash scripts/install_tg_listener.sh \

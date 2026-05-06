@@ -14,8 +14,8 @@ Design contract:
   ``signal``); no third-party deps so the framework stays
   embeddable in any host project.
 * Single-process loop: ``getUpdates`` long-polls TG (default 25s),
-  filters to ``callback_query`` updates only, applies auth +
-  rate-limiting, and dispatches to a pluggable handler. Every
+  filters to ``callback_query`` updates plus Lark deep-link ``/start``
+  messages, applies auth + rate-limiting, and dispatches to a pluggable handler. Every
   failure path falls through ``answer_callback_query`` so the user
   always gets a toast — silent dropping is the worst outcome.
 * SIGTERM / SIGINT cleanly stop the loop and flush the rolling
@@ -194,7 +194,7 @@ class TgCallbackListener:
         self._stop_event.set()
 
     def run_once(self) -> int:
-        """Single ``getUpdates`` cycle. Returns count of dispatched callbacks.
+        """Single ``getUpdates`` cycle. Returns count of dispatched actions.
 
         Filtering / auth / rate-limit failures still consume the
         update (i.e. advance ``offset``) but don't count toward the
@@ -217,19 +217,31 @@ class TgCallbackListener:
                 # so we don't replay them next poll.
                 self._offset = max(self._offset, update_id + 1)
             cb = update.get("callback_query")
-            if not isinstance(cb, dict):
+            if isinstance(cb, dict):
+                self._stats["callback_queries_received"] += 1
+                try:
+                    if self._handle_callback_query(cb):
+                        dispatched += 1
+                except Exception as exc:  # noqa: BLE001 - daemon must not die
+                    self._record_error(
+                        f"handle_callback_failed:{type(exc).__name__}:{exc}"
+                    )
+                    cb_id = cb.get("id")
+                    if cb_id:
+                        self._safe_answer(cb_id, text="Internal error")
                 continue
-            self._stats["callback_queries_received"] += 1
-            try:
-                if self._handle_callback_query(cb):
-                    dispatched += 1
-            except Exception as exc:  # noqa: BLE001 - daemon must not die
-                self._record_error(
-                    f"handle_callback_failed:{type(exc).__name__}:{exc}"
-                )
-                cb_id = cb.get("id")
-                if cb_id:
-                    self._safe_answer(cb_id, text="Internal error")
+
+            msg = update.get("message")
+            if isinstance(msg, dict):
+                try:
+                    if self._handle_start_message(msg):
+                        dispatched += 1
+                except Exception as exc:  # noqa: BLE001 - daemon must not die
+                    self._record_error(
+                        f"handle_start_failed:{type(exc).__name__}:{exc}"
+                    )
+                    chat = msg.get("chat") or {}
+                    self._safe_send_message(chat.get("id"), "Internal error")
 
         return dispatched
 
@@ -297,7 +309,7 @@ class TgCallbackListener:
         payload = {
             "offset": self._offset,
             "timeout": self._long_poll_timeout,
-            "allowed_updates": ["callback_query"],
+            "allowed_updates": ["callback_query", "message"],
         }
         body = self._http_post("getUpdates", payload)
         if not body.get("ok"):
@@ -327,6 +339,27 @@ class TgCallbackListener:
             self._http_post("answerCallbackQuery", payload)
         except (urlerror.URLError, OSError, ValueError) as exc:
             self._record_error(f"answer_failed:{type(exc).__name__}:{exc}")
+
+    def _safe_send_message(
+        self,
+        chat_id: Any,
+        text: str,
+        *,
+        reply_to_message_id: Any = None,
+    ) -> None:
+        """``sendMessage`` that swallows transport errors for /start flows."""
+        if chat_id is None:
+            return
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text[:4096] if text else "Done",
+        }
+        if reply_to_message_id is not None:
+            payload["reply_to_message_id"] = reply_to_message_id
+        try:
+            self._http_post("sendMessage", payload)
+        except (urlerror.URLError, OSError, ValueError) as exc:
+            self._record_error(f"send_message_failed:{type(exc).__name__}:{exc}")
 
     def _safe_remove_buttons(self, chat_id: Any, message_id: Any) -> None:
         """Strip the inline keyboard from the originating message.
@@ -378,6 +411,36 @@ class TgCallbackListener:
         if not callback_data.startswith(prefix):
             return None
         return callback_data[len(prefix):]
+
+    def _parse_start_action(self, text: str) -> str | None:
+        """Translate Telegram deep-link ``/start`` payloads to callback_data."""
+        parts = text.strip().split(maxsplit=1)
+        if not parts:
+            return None
+        command = parts[0].split("@", 1)[0].lower()
+        if command != "/start" or len(parts) != 2:
+            return None
+        payload = urlparse.unquote(parts[1].strip())
+        if not payload.startswith("case_"):
+            return None
+
+        body = payload[len("case_"):]
+        suffix_map = {
+            "_dry_publish": "dry-publish",
+            "_write_stub": "write-stub",
+            "_drop": "drop",
+        }
+        for suffix, action in suffix_map.items():
+            if body.endswith(suffix):
+                case_id = body[: -len(suffix)]
+                return f"case:{action}:{case_id}" if case_id else None
+
+        snooze_marker = "_snooze_"
+        if snooze_marker in body:
+            case_id, days = body.rsplit(snooze_marker, 1)
+            if case_id and days:
+                return f"case:snooze:{case_id}:{days}"
+        return None
 
     def _rate_limit_ok(self, key: str) -> bool:
         """Sliding-window per-key check; mutates the bucket on accept."""
@@ -481,6 +544,84 @@ class TgCallbackListener:
             cb_id,
             text=f"❌ {summary[:180] or 'Action failed'}",
             show_alert=True,
+        )
+        return False
+
+    def _handle_start_message(self, msg: dict[str, Any]) -> bool:
+        """Process one Lark→Telegram deep-link ``/start`` message."""
+        text = msg.get("text")
+        if not isinstance(text, str) or not text:
+            return False
+        callback_data = self._parse_start_action(text)
+        if not callback_data:
+            return False
+
+        wrapper = {"from": msg.get("from") or {}, "message": msg}
+        chat = msg.get("chat") or {}
+        from_obj = msg.get("from") or {}
+        chat_id = chat.get("id") if chat.get("id") is not None else from_obj.get("id")
+        user_id = from_obj.get("id")
+        message_id = msg.get("id") or msg.get("message_id")
+
+        if not self._is_allowed(wrapper):
+            self._safe_send_message(
+                chat_id,
+                "Not authorized",
+                reply_to_message_id=message_id,
+            )
+            self._record_error(f"unauthorized_start:{user_id}")
+            return False
+
+        rl_key = str(chat_id if chat_id is not None else user_id or "anon")
+        if not self._rate_limit_ok(rl_key):
+            self._safe_send_message(
+                chat_id,
+                "Rate limited; try later",
+                reply_to_message_id=message_id,
+            )
+            return False
+
+        ctx = {
+            "root": self._host_root,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "message_id": message_id,
+        }
+        try:
+            result = self._dispatcher(callback_data, ctx)
+        except Exception as exc:  # noqa: BLE001 - daemon must not die
+            self._record_error(
+                f"dispatch_exception:{type(exc).__name__}:{exc}"
+            )
+            self._safe_send_message(
+                chat_id,
+                "Internal error",
+                reply_to_message_id=message_id,
+            )
+            return False
+
+        if not isinstance(result, dict):
+            self._record_error("dispatch_invalid_result_shape")
+            self._safe_send_message(
+                chat_id,
+                "Internal error",
+                reply_to_message_id=message_id,
+            )
+            return False
+
+        success = bool(result.get("success"))
+        summary = str(result.get("summary") or "")
+        response = summary[:200] or "Done"
+        if success:
+            self._safe_send_message(chat_id, response, reply_to_message_id=message_id)
+            self._stats["actions_dispatched"] += 1
+            self._stats["last_action_at"] = _utc_now_iso()
+            return True
+
+        self._safe_send_message(
+            chat_id,
+            f"❌ {response[:180] or 'Action failed'}",
+            reply_to_message_id=message_id,
         )
         return False
 

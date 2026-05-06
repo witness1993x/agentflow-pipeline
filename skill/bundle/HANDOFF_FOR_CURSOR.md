@@ -1,7 +1,7 @@
 # Handoff for Cursor — agentflow-pipeline
 
 **Last updated**: 2026-05-04 by Claude Opus 4.7 (1M context)
-**State**: v0.4.0-rc1 ready to ship; 471 pytest passing; 6 console scripts on PATH; full Lark + TG dual-channel + level-B half-automation in place. Final integration + GitHub push pending (this is the next concrete TODO).
+**State**: v0.4.1 patch in progress; 477 pytest passing; Lark Custom Bot compatibility preserved while Lark→TG deep-link bridge is wired through CLI/env and the TG daemon handles `/start` payloads.
 
 ---
 
@@ -15,7 +15,7 @@ The framework is now a **fully functional Claude Code / OpenClaw skill** that:
 4. **Receives interactive callbacks** from Telegram (long-poll daemon) — clicking inline buttons triggers framework actions: `dry-publish`, `write-stub`, `drop`, `snooze`
 5. **Ships as a single skill zip** that OpenClaw can list as a plugin (alongside `openclaw-lark`)
 
-What remains: integrate the 6 parallel agents' output into a coherent v0.4.0 release on GitHub. This document plus the existing PROGRESS.md gives you the context you need.
+What remains: commit/push the v0.4.1 patch and publish a GitHub release once the operator approves.
 
 ---
 
@@ -23,8 +23,8 @@ What remains: integrate the 6 parallel agents' output into a coherent v0.4.0 rel
 
 **Repo**: https://github.com/witness1993x/agentflow-pipeline
 **Local path**: `/Users/witness/Desktop/experimental/agentflow-git-repo-clone`
-**Last published release**: v0.3.0 (level-B auto-promote)
-**Pending release**: v0.4.0 (Lark + TG dual-channel + interactive callbacks + OpenClaw plugin)
+**Last published release**: v0.4.0 (Lark + TG dual-channel + interactive callbacks + OpenClaw plugin)
+**Pending release**: v0.4.1 (Lark compatibility patch + Lark→TG bridge completion)
 
 ### Test count history
 
@@ -215,18 +215,14 @@ grep "agentflow-tg" pyproject.toml
 2. Add bot to a group + send `/start`
 3. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CALLBACK_SECRET` in `.env`
 4. Run `bash scripts/install_tg_listener.sh --apply`
-5. Lark cards then deep-link to TG via `--lark-cta-tg-bot @bot_username` (TODO: this flag isn't yet wired into lark_notifier — it was deferred to integration phase, see "Outstanding integration TODOs" below)
+5. Lark cards can deep-link to TG via `--lark-cta-tg-bot @bot_username` or `LARK_CTA_TG_BOT`; the promoted button becomes `https://t.me/<bot>?start=case_HSP-XXX_dry_publish`, and `agentflow-tg-listen` handles that `/start` payload.
 
 ---
 
 ## Outstanding integration TODOs (for cursor or next claude)
 
-1. **Verify `agentflow-tg-notify` entry script** in pyproject.toml; add if missing (see Known Issue above)
-2. **Wire `--lark-cta-tg-bot @username` flag** into `lark_notifier.notify_scan_complete()`:
-   - Currently lark cards link `📝 promoted [N]` to `source_url` (the source GitHub/HN URL)
-   - User's stated requirement: when this flag is set, redirect to `https://t.me/{bot_username}?start=case_HSP-XXX_dry_publish` instead, so clicking Lark card jumps to TG and pre-fires a callback
-   - This was scoped into Phase 2 but the agents didn't include this specific flag in lark_notifier (only docs mention it)
-   - Implementation: a) add `--lark-cta-tg-bot` to scan_hotspots argparse; b) pass through to `_maybe_notify_lark`; c) `lark_notifier.notify_scan_complete` accepts `tg_bot_deep_link_username: str | None`; d) when set, override the promoted button URL with the TG deep-link
+1. **Done after v0.4.0**: `agentflow-tg-notify` entry script exists in pyproject.toml.
+2. **Done after v0.4.0**: `--lark-cta-tg-bot @username` and `LARK_CTA_TG_BOT` are wired through `scan_hotspots` → `lark_notifier.notify_scan_complete()`, and `agentflow-tg-listen` handles the resulting `/start case_HSP-XXX_dry_publish` message.
 3. **Bump version to 0.4.0** in `pyproject.toml` (currently 0.3.0)
 4. **Update README badges** tests/version (currently 386 / 0.3.0 → should be 471 / 0.4.0)
 5. **Rebuild skill zip** with all new files (run from framework root):
@@ -282,11 +278,9 @@ grep "agentflow-tg" pyproject.toml
 
 ## Known issues / things to watch
 
-1. **`--lark-cta-tg-bot` flag NOT yet implemented** — README docs reference it but no code path exists. See TODO #2 above. Without this, Lark cards still link to source URLs (not TG deep links).
-2. **agentflow-tg-notify entry script possibly missing** — see TODO #1.
-3. **launchd env injection lost on reboot** — `launchctl setenv` is per-session. User will need to re-run after reboot, or add to `~/.zprofile`. Documented in `scripts/install_schedule.md` under "macOS launchd env gotcha".
-4. **TG callback daemon needs `TELEGRAM_CALLBACK_SECRET`** for production safety; without it any chat the bot is in can fire actions. The daemon will start with stderr warning but not refuse.
-5. **first-day promote will skip** — `_maybe_auto_promote` requires ≥2 scans in history before it can detect "new" entries. First-time installs see "[promote] skip: only 1 scan in history; need ≥2" until the second scan completes.
+1. **launchd env injection lost on reboot** — `launchctl setenv` is per-session. User will need to re-run after reboot, or add to `~/.zprofile`. Documented in `scripts/install_schedule.md` under "macOS launchd env gotcha".
+2. **TG callback daemon needs `TELEGRAM_CALLBACK_SECRET` + chat allowlist** for production safety. `TELEGRAM_CALLBACK_SECRET` protects inline `callback_data`; `TELEGRAM_CHAT_ID` / `--chat-id-allowlist` is the trust boundary for visible Lark deep-link `/start` payloads.
+3. **first-day promote will skip** — `_maybe_auto_promote` requires ≥2 scans in history before it can detect "new" entries. First-time installs see "[promote] skip: only 1 scan in history; need ≥2" until the second scan completes.
 
 ---
 
@@ -309,31 +303,27 @@ cd /Users/witness/Desktop/experimental/agentflow-git-repo-clone
 
 # 1. Verify everything still passes
 python3 -m pytest tests/ -q
-# Expected: 471 passed
+# Expected: 477 passed
 
-# 2. Address TODO #1 (verify agentflow-tg-notify entry):
-grep "agentflow-tg" pyproject.toml
-# If only one line, add: agentflow-tg-notify = "agentflow_pipeline.tg_notifier:_main_entry"
+# 2. Rebuild skill zip for v0.4.1
+mkdir -p dist
+ZIP=dist/agentflow-pipeline-skill-v0.4.1.zip
+ZIP_LATEST=dist/agentflow-pipeline-skill.zip
+rm -f "$ZIP" "$ZIP_LATEST"
+( cd skill && zip -rq "../$ZIP" . -x '*.pyc' '__pycache__/*' '*/__pycache__/*' '.DS_Store' '*/.DS_Store' )
+cp "$ZIP" "$ZIP_LATEST"
 
-# 3. Address TODO #2 (--lark-cta-tg-bot flag): see "Outstanding integration TODOs" #2 for design
+# 3. Commit + push + create GitHub release v0.4.1 after operator approval
 
-# 4. Bump version + README badges:
-sed -i.bak 's/^version = "0\.3\.0"/version = "0.4.0"/' pyproject.toml && rm pyproject.toml.bak
-sed -i.bak 's/tests-386%20passing/tests-471%20passing/; s/version-0\.3\.0/version-0.4.0/' README.md && rm README.md.bak
-
-# 5. Rebuild skill zip (see TODO #5 above for full sequence)
-
-# 6. Commit + push + release (see TODO #7 above)
-
-# 7. Verify release downloadable:
-curl -sL -o /tmp/test.zip https://github.com/witness1993x/agentflow-pipeline/releases/download/v0.4.0/agentflow-pipeline-skill.zip
+# 4. Verify release downloadable:
+curl -sL -o /tmp/test.zip https://github.com/witness1993x/agentflow-pipeline/releases/download/v0.4.1/agentflow-pipeline-skill.zip
 unzip -l /tmp/test.zip | grep -E "(tg_notifier|tg_callback|case_actions|notification_templates|install\.sh|openclaw\.plugin\.json)" | wc -l
 # Expected: ≥6 (one match per new file in zip)
 ```
 
 ---
 
-## Future work (not blocking v0.4.0)
+## Future work (not blocking v0.4.1)
 
 These are ideas users have hinted at but haven't requested yet:
 

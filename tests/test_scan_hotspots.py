@@ -899,6 +899,7 @@ def test_main_notify_lark_dry_run_calls_notifier_with_dry_run_kwarg(
     assert call_kwargs["framework_repo_url"] == (
         "https://github.com/witness1993x/agentflow-pipeline"
     )
+    assert call_kwargs["tg_bot_deep_link_username"] is None
     # No template provided -> trends_view_url is None.
     assert call_kwargs["trends_view_url"] is None
     # scan_result + shipped_repos passed positionally-by-keyword per contract.
@@ -1393,6 +1394,61 @@ def test_maybe_notify_lark_forwards_promoted_cases_kwarg(
     monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy2)
     _maybe_notify_lark(args, aggregate, tmp_path)
     assert spy2.calls[0]["kwargs"]["auto_promoted_cases"] == []
+
+
+def test_maybe_notify_lark_forwards_lark_cta_tg_bot(monkeypatch, tmp_path) -> None:
+    """``--lark-cta-tg-bot`` must reach the Lark notifier as the TG bridge username."""
+    spy = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+
+    args = _make_args(
+        notify_lark=True,
+        lark_dry_run=True,
+        lark_framework_repo_url="https://example.com/framework",
+        lark_trends_view_url_template="",
+        lark_cta_tg_bot="@agentflow_bot",
+        root=str(tmp_path),
+    )
+    aggregate = {
+        "scanned_at": "2026-05-01T10:00:00+00:00",
+        "unique_count": 1,
+        "by_source": {"github": 1},
+        "top": [],
+        "output_dir": str(tmp_path / "trends" / "2026-05-01-10"),
+    }
+
+    _maybe_notify_lark(args, aggregate, tmp_path)
+
+    assert spy.calls[0]["kwargs"]["tg_bot_deep_link_username"] == "@agentflow_bot"
+
+
+def test_maybe_notify_lark_uses_lark_cta_tg_bot_env_when_flag_omitted(
+    monkeypatch, tmp_path
+) -> None:
+    """Existing --notify-lark schedules can enable the bridge with env only."""
+    spy = _NotifySpy()
+    monkeypatch.setattr(scan_hotspots, "_notify_scan_complete", spy)
+    monkeypatch.setenv("LARK_CTA_TG_BOT", "@env_agentflow_bot")
+
+    args = _make_args(
+        notify_lark=True,
+        lark_dry_run=True,
+        lark_framework_repo_url="https://example.com/framework",
+        lark_trends_view_url_template="",
+        lark_cta_tg_bot="",
+        root=str(tmp_path),
+    )
+    aggregate = {
+        "scanned_at": "2026-05-01T10:00:00+00:00",
+        "unique_count": 1,
+        "by_source": {"github": 1},
+        "top": [],
+        "output_dir": str(tmp_path / "trends" / "2026-05-01-10"),
+    }
+
+    _maybe_notify_lark(args, aggregate, tmp_path)
+
+    assert spy.calls[0]["kwargs"]["tg_bot_deep_link_username"] == "@env_agentflow_bot"
 
 
 def test_main_auto_promote_end_to_end_passes_promoted_to_lark(

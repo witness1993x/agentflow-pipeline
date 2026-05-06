@@ -104,6 +104,12 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# If the operator followed the README one-time setup, reuse TELEGRAM_CHAT_ID
+# as the listener allowlist unless they supplied a more specific list.
+if [ -z "$CHAT_ID_ALLOWLIST" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+    CHAT_ID_ALLOWLIST="$TELEGRAM_CHAT_ID"
+fi
+
 # ---------- platform detection -----------------------------------------------
 
 UNAME_S="$(uname -s)"
@@ -118,6 +124,9 @@ log "root     : $ROOT"
 log "label    : $LABEL"
 log "mode     : $MODE"
 log "apply    : $([ "$APPLY" = "1" ] && echo yes || echo 'no (dry-run)')"
+if [ -n "$CHAT_ID_ALLOWLIST" ]; then
+    log "allowlist: $CHAT_ID_ALLOWLIST"
+fi
 
 # ---------- pre-flight: console scripts --------------------------------------
 

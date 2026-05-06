@@ -846,6 +846,15 @@ def register_scan_args(parser: argparse.ArgumentParser) -> None:
         help="URL for the 'framework repo' button on the Lark card.",
     )
     parser.add_argument(
+        "--lark-cta-tg-bot",
+        default="",
+        help=(
+            "Optional Telegram bot username for promoted-case Lark CTAs. "
+            "When set, promoted buttons link to https://t.me/<bot>?start=case_<HSP>_dry_publish. "
+            "Falls back to LARK_CTA_TG_BOT env when omitted."
+        ),
+    )
+    parser.add_argument(
         "--lark-dry-run",
         action="store_true",
         default=False,
@@ -1058,6 +1067,11 @@ def _maybe_notify_lark(
             trends_view_url=trends_url or None,
             dry_run=bool(getattr(args, "lark_dry_run", False)),
             auto_promoted_cases=list(promoted_cases or []),
+            tg_bot_deep_link_username=(
+                getattr(args, "lark_cta_tg_bot", "")
+                or os.environ.get("LARK_CTA_TG_BOT", "")
+                or None
+            ),
         )
         if not quiet:
             try:

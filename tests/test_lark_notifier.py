@@ -548,6 +548,42 @@ def test_notify_scan_complete_omitting_auto_promoted_matches_legacy(
     assert label_sets[0] == label_sets[1] == label_sets[2]
 
 
+def test_notify_scan_complete_omitting_tg_username_matches_legacy(
+    clean_env,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_fixture: dict,
+    shipped_fixture: list[dict],
+) -> None:
+    """The TG bridge kwarg must be inert unless it has a non-empty username."""
+    monkeypatch.setenv("LARK_WEBHOOK_URL", "https://example.com/lark/hook")
+    spy = _UrlopenSpy()
+    monkeypatch.setattr(lark_notifier.urlrequest, "urlopen", spy)
+
+    promoted = [
+        {
+            "hotspot_id": "HSP-005",
+            "hotspot_name": "evm-arb-bot",
+            "case_dir": "/Users/op/agentflow/cases/HSP-005-evm-arb-bot",
+            "source_url": "https://github.com/example/evm-arb-bot",
+        }
+    ]
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=promoted,
+    )
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=promoted,
+        tg_bot_deep_link_username="",
+    )
+
+    assert spy.calls[0]["payload"] == spy.calls[1]["payload"]
+
+
 # ---------------------------------------------------------------------------
 # 18. auto_promoted_cases — single case renders section + button + green accent
 # ---------------------------------------------------------------------------
@@ -601,6 +637,43 @@ def test_notify_scan_complete_one_promoted_case(
 
     # Accent bumped to green (unique_count > 0 + promoted non-empty).
     assert payload["card"]["header"]["template"] == "green"
+
+
+def test_notify_scan_complete_promoted_case_can_link_to_tg_bot(
+    clean_env,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_fixture: dict,
+    shipped_fixture: list[dict],
+) -> None:
+    monkeypatch.setenv("LARK_WEBHOOK_URL", "https://example.com/lark/hook")
+    spy = _UrlopenSpy()
+    monkeypatch.setattr(lark_notifier.urlrequest, "urlopen", spy)
+
+    promoted = [
+        {
+            "hotspot_id": "HSP-005",
+            "hotspot_name": "evm-arb-bot",
+            "case_dir": "/Users/op/agentflow/cases/HSP-005-evm-arb-bot",
+            "source_url": "https://github.com/example/evm-arb-bot",
+        }
+    ]
+    notify_scan_complete(
+        scan_result=scan_fixture,
+        shipped_repos=shipped_fixture,
+        top_n=3,
+        auto_promoted_cases=promoted,
+        tg_bot_deep_link_username="@agentflow_bot",
+    )
+    payload = spy.calls[0]["payload"]
+    action = next(
+        el for el in payload["card"]["elements"] if el.get("tag") == "action"
+    )
+    promoted_btn = next(
+        a for a in action["actions"] if a["text"]["content"] == "📝 promoted [1]"
+    )
+    assert promoted_btn["url"] == (
+        "https://t.me/agentflow_bot?start=case_HSP-005_dry_publish"
+    )
 
 
 # ---------------------------------------------------------------------------

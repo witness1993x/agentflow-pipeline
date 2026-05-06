@@ -318,6 +318,7 @@ boot via a `~/.zprofile` line or a separate `RunAtLoad` plist):
 launchctl setenv LARK_WEBHOOK_URL "$LARK_WEBHOOK_URL"
 launchctl setenv LARK_WEBHOOK_SECRET "$LARK_WEBHOOK_SECRET"
 launchctl setenv LARK_WEBHOOK_KEYWORDS "$LARK_WEBHOOK_KEYWORDS"
+launchctl setenv LARK_CTA_TG_BOT "$LARK_CTA_TG_BOT"  # optional bridge
 ```
 
 B. **Wrap `agentflow-scan` in a shell script that sources `.env` first**, and point the
@@ -622,7 +623,7 @@ bash scripts/install_tg_listener.sh [options]
   -h, --help                        show this help
 ```
 
-### Lark → TG deep link bridge (design)
+### Lark → TG deep link bridge
 
 Lark Custom Bot is push-only — its inline buttons cannot trigger
 callbacks back to the framework. To preserve interactivity end-to-
@@ -631,14 +632,17 @@ framework rewrites the same set of buttons into Telegram **deep
 links** when posting to Lark:
 
 ```
-[📊 dry-publish] → https://t.me/<bot_username>?start=publish-HSP-042-...-<sig>
+[📊 dry-publish] → https://t.me/<bot_username>?start=case_HSP-042_dry_publish
 ```
 
 The deep link opens the user's Telegram client, focuses the bot
 chat, and sends `/start <payload>` automatically. The
-`agentflow-tg-listen` daemon recognises `/start` payloads with the
-`TELEGRAM_CALLBACK_SECRET` prefix and dispatches them to the same
-`case_actions` handlers used for in-chat inline-button clicks.
+`agentflow-tg-listen` daemon recognises these `/start` payloads and
+dispatches them to the same `case_actions` handlers used for in-chat
+inline-button clicks. Because Telegram `/start` payloads are visible
+URLs rather than hidden `callback_data`, production installs should set
+`--chat-id-allowlist` / `TELEGRAM_CHAT_ID` so only trusted chats can
+trigger deep-link actions.
 
 This means a single click in Lark performs the same action as a
 click in TG — the daemon just becomes the universal action router.
@@ -652,3 +656,9 @@ bash scripts/install_schedule.sh \
   --label com.agentflow.scan.daily-10am \
   --apply
 ```
+
+For an already-installed Lark schedule, you can also set
+`LARK_CTA_TG_BOT=@your_bot_username` in the launchd / systemd environment
+and leave the existing `--scan-args "--notify-lark"` untouched. If neither
+the flag nor env var is set, the promoted button keeps the legacy
+`source_url` behavior.

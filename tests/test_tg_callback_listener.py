@@ -163,6 +163,25 @@ def _callback_update(
     }
 
 
+def _message_update(
+    update_id: int,
+    *,
+    text: str,
+    chat_id: int = 555,
+    user_id: int = 777,
+    message_id: int = 43,
+) -> dict[str, Any]:
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": message_id,
+            "from": {"id": user_id, "first_name": "Op"},
+            "chat": {"id": chat_id, "type": "private"},
+            "text": text,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -205,6 +224,60 @@ def test_run_once_dispatches_callback_with_callback_data(
     edits = fake_server.find_calls("editMessageReplyMarkup")
     assert len(edits) == 1
     assert listener.stats["actions_dispatched"] == 1
+
+
+def test_run_once_dispatches_lark_deep_link_start_message(
+    fake_server: FakeTgServer, host_root: Path
+) -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def dispatcher(cb_data: str, ctx: dict[str, Any]) -> dict[str, Any]:
+        seen.append((cb_data, ctx))
+        return {
+            "action": "case:dry-publish",
+            "case_id": "HSP-7",
+            "success": True,
+            "summary": "dry publish checked HSP-7",
+            "follow_up": [],
+        }
+
+    listener = _make_listener(host_root, dispatcher=dispatcher)
+    fake_server.enqueue_updates([
+        _message_update(101, text="/start case_HSP-7_dry_publish"),
+    ])
+
+    assert listener.run_once() == 1
+    assert seen[0][0] == "case:dry-publish:HSP-7"
+    assert seen[0][1]["chat_id"] == 555
+    assert seen[0][1]["user_id"] == 777
+    assert listener.stats["callback_queries_received"] == 0
+    assert listener.stats["actions_dispatched"] == 1
+
+    messages = fake_server.find_calls("sendMessage")
+    assert len(messages) == 1
+    assert "dry publish checked HSP-7" in messages[0]["payload"]["text"]
+    assert messages[0]["payload"]["reply_to_message_id"] == 43
+
+
+def test_run_once_start_message_respects_allowlist(
+    fake_server: FakeTgServer, host_root: Path
+) -> None:
+    seen: list[str] = []
+    listener = _make_listener(
+        host_root,
+        allowed_chat_ids=[999],
+        dispatcher=lambda cb, ctx: seen.append(cb)
+        or {"action": "x", "case_id": "y", "success": True, "summary": "ok", "follow_up": []},
+    )
+    fake_server.enqueue_updates([
+        _message_update(102, text="/start case_HSP-7_dry_publish", chat_id=555),
+    ])
+
+    assert listener.run_once() == 0
+    assert seen == []
+    messages = fake_server.find_calls("sendMessage")
+    assert any("Not authorized" in (c["payload"] or {}).get("text", "") for c in messages)
+    assert any("unauthorized_start" in e for e in listener.stats["errors"])
 
 
 def test_run_once_chat_id_not_in_allowlist_blocks_dispatch(

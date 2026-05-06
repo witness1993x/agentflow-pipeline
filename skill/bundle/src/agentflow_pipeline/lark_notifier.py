@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, TypedDict
 from urllib import error as urlerror
+from urllib.parse import quote
 from urllib import request as urlrequest
 
 from .notification_templates import (
@@ -479,6 +480,16 @@ def _render_promoted_section(promoted: list[dict]) -> list[str]:
     return rendered.split("\n")
 
 
+def _build_tg_case_deep_link(username: str, hotspot_id: str) -> str:
+    """Return a Telegram bot start URL for the Lark CTA bridge."""
+    clean_username = username.strip().lstrip("@")
+    clean_hotspot_id = hotspot_id.strip()
+    if not clean_username or not clean_hotspot_id:
+        return ""
+    start_payload = quote(f"case_{clean_hotspot_id}_dry_publish", safe="")
+    return f"https://t.me/{clean_username}?start={start_payload}"
+
+
 def notify_scan_complete(
     *,
     scan_result: dict,
@@ -488,6 +499,7 @@ def notify_scan_complete(
     dry_run: bool = False,
     trends_view_url: str | None = None,
     auto_promoted_cases: list[dict] | None = None,
+    tg_bot_deep_link_username: str | None = None,
 ) -> LarkSendResult:
     """Render and send the daily-scan summary card.
 
@@ -507,7 +519,8 @@ def notify_scan_complete(
       1. ``📚 framework repo``
       2. up to 3 ``⭐ <repo-name>`` buttons (sorted by ``hotspot_id``)
       3. ``📝 promoted [N]`` when ``auto_promoted_cases`` is non-empty
-         and the first case carries a ``source_url``
+         and either a TG bridge username is set or the first case carries
+         a ``source_url``
       4. ``📊 查看 scan.md`` when ``trends_view_url`` is set
     """
     unique_count = int(scan_result.get("unique_count") or 0)
@@ -570,10 +583,16 @@ def notify_scan_complete(
         if name and url:
             actions.append((f"⭐ {name}", url))
     if promoted_cases:
-        first_source = str(promoted_cases[0].get("source_url") or "")
-        if first_source:
+        first_case = promoted_cases[0]
+        first_source = str(first_case.get("source_url") or "")
+        hotspot_id = str(first_case.get("hotspot_id") or "")
+        promoted_url = _build_tg_case_deep_link(
+            tg_bot_deep_link_username or "",
+            hotspot_id,
+        ) or first_source
+        if promoted_url:
             actions.append(
-                (f"📝 promoted [{len(promoted_cases)}]", first_source)
+                (f"📝 promoted [{len(promoted_cases)}]", promoted_url)
             )
     if trends_view_url:
         actions.append(("📊 查看 scan.md", trends_view_url))
