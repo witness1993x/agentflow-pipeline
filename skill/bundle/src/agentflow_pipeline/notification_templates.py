@@ -187,7 +187,11 @@ def format_top_line(idx: int, item: dict[str, Any]) -> str:
     title = str(title)
     if len(title) > 90:
         title = title[:89] + "…"
-    return f"{idx}. [{src}] {eng_int}★ `{title}`"
+    line = f"{idx}. [{src}] {eng_int}★ `{title}`"
+    url = str(item.get("url") or item.get("html_url") or item.get("source_url") or "")
+    if url:
+        line += f" — [项目链接]({url})"
+    return line
 
 
 def format_promoted_case_dir(case_dir: str) -> str:

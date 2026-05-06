@@ -43,11 +43,15 @@ For OpenClaw Lark App interaction, install and configure
 Feishu/Lark App connection, inbound gateway, interactive cards,
 permissions, and allowlists. AgentFlow remains the Python framework that
 scans, promotes, stores case state, and exposes CLI/skill actions.
+Only this OpenClaw Lark App mode can provide a Lark-only closed loop:
+receive the Git 热点搜索 card in Lark, click Git-case actions in Lark,
+and have OpenClaw forward those actions to AgentFlow.
 
 When run **standalone**, the framework's bundled `lark_notifier` /
 `tg_notifier` modules can still POST to Lark Custom Bot webhooks and
 Telegram Bot APIs directly. Treat those as fallback transports, not as
-the OpenClaw Lark App integration path.
+the OpenClaw Lark App integration path. Standalone Lark Custom Bot is
+receive-only; it cannot guarantee Lark-side operation callbacks.
 
 Interaction vocabulary is Git-case specific:
 

@@ -163,6 +163,9 @@ def test_render_top_section_orders_and_marks_engagement(scan_fixture: dict) -> N
     assert lines[2].startswith("3. [reddit] 188★")
     # Title back-tick wrapped.
     assert "`sstklen/trump-code`" in lines[0]
+    # Each surfaced hotspot keeps a direct source/project link in the report.
+    assert "[项目链接](https://github.com/sstklen/trump-code)" in lines[0]
+    assert "[项目链接](https://news.ycombinator.com/item?id=1)" in lines[1]
 
 
 def test_render_top_section_empty_returns_empty_string() -> None:
@@ -281,6 +284,7 @@ def test_render_scan_card_byte_for_byte_legacy_layout(
     assert "_合并掉 6 条跨源重复_" in body
     assert "**🔥 Top 3**:" in body
     assert "1. [github] 745★ `sstklen/trump-code`" in body
+    assert "[项目链接](https://github.com/sstklen/trump-code)" in body
     assert "**📦 Framework 已 ship (3)**:" in body
     assert "- chainstream-launch-radar (TypeScript, data_pipeline)" in body
     assert body.endswith("`")  # ends with the back-ticked scanned_at iso
@@ -312,7 +316,9 @@ def test_render_scan_card_uses_user_supplied_template(
     assert title.startswith("MY TITLE [24] @ ")
     assert "Sources: gh=18, hn=7, rd=5" in body
     assert "1. [github] 745★ `sstklen/trump-code`" in body
+    assert "[项目链接](https://github.com/sstklen/trump-code)" in body
     assert "2. [hackernews] 374★ `Show HN: tiny vector DB`" in body
+    assert "[项目链接](https://news.ycombinator.com/item?id=1)" in body
     # top_n=2 → only two lines in the top section.
     assert "DeFi flash loan tutorial" not in body
 

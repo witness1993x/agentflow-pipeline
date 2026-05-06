@@ -2,7 +2,7 @@
 
 **Git 热点搜索 and Git/GitHub repo delivery framework for turning selected developer/data-source signals into shipped GitHub repositories backed by [ChainStream](https://chainstream.io) or pluggable on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-483%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.5-blue)]()
+[![tests](https://img.shields.io/badge/tests-483%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.6-blue)]()
 
 > Why this exists: this package owns **Git 热点搜索**: finding developer/repo signals that are worth turning into a GitHub project, then carrying that project through build/test/probe/publish/monitoring. That path usually involves 30+ disconnected manual steps — GitHub/HN/Reddit signal search, repo planning, scaffold, source workspace setup, build command inference, npm/pip install, tests, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 8 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer. It is intentionally different from the separate AgentFlow blog/article hotspot package, which owns article/content hotspots.
 >
@@ -133,6 +133,13 @@ to provide a Feishu channel; OpenClaw routes Lark messages/cards through
 `@larksuite/openclaw-lark`, and AgentFlow provides the skill commands and case
 state the agent operates on.
 
+With this mode enabled, the workflow can stay entirely inside Lark: the Git
+热点搜索 card is received in Lark, the operator clicks Git-case actions in
+Lark, and OpenClaw forwards those actions to
+`agentflow_pipeline.lark_callback.handle_event`. The supported Lark action
+vocabulary is `git_case_dry_publish`, `git_case_write_stub`,
+`git_case_snooze`, and `git_case_drop`.
+
 ### Standalone webhook fallback
 
 After every `agentflow-scan` run, optionally post a summary card to a Lark /
@@ -150,10 +157,13 @@ bash scripts/install_schedule.sh \
   --apply
 ```
 
-The card includes the day's top hotspots, all shipped framework repos
-(auto-discovered from `cases/HSP-*/`), and one-click buttons to the
-framework repo + each shipped repo. See `scripts/install_schedule.md`
-for the full env reference + macOS launchd PATH/env gotchas.
+The card includes the day's top Git hotspots with direct source/project links,
+all shipped framework repos (auto-discovered from `cases/HSP-*/`), and
+one-click buttons to the framework repo + each shipped repo. This fallback is
+receive-only in Lark: Lark Custom Bot cannot handle button callbacks, so use
+OpenClaw Lark App mode when you need Lark-only operation. See
+`scripts/install_schedule.md` for the full env reference + macOS launchd
+PATH/env gotchas.
 
 ## TG callback (interactive HITL)
 

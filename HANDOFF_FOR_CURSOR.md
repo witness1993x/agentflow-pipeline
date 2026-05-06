@@ -1,7 +1,7 @@
 # Handoff for Cursor — agentflow-pipeline
 
 **Last updated**: 2026-05-06 by Cursor
-**State**: v0.4.5 patch in progress; Git 热点搜索 terminology is standardized and TG/Lark interaction vocab is Git-case specific (`case:*` / `git_case_*`) to avoid conflicts with the separate AgentFlow blog/article hotspot package.
+**State**: v0.4.6 patch in progress; Git 热点搜索 reports now include direct hotspot project/source links. Lark-only operation is supported only through OpenClaw Lark App mode (`@larksuite/openclaw-lark` forwarding `git_case_*` actions), while standalone Lark Custom Bot remains receive-only.
 
 ---
 
@@ -15,7 +15,7 @@ The framework is now a **fully functional Claude Code / OpenClaw skill** that:
 4. **Receives interactive callbacks** from Telegram (long-poll daemon) — clicking inline buttons triggers framework actions: `dry-publish`, `write-stub`, `drop`, `snooze`
 5. **Ships as a single skill zip** that OpenClaw can list as an AgentFlow skill/plugin alongside the official Lark channel plugin
 
-What remains: verify/package the v0.4.5 patch; commit/push/release only if requested.
+What remains: commit/push/release the v0.4.6 patch only if requested.
 
 ---
 
@@ -24,7 +24,7 @@ What remains: verify/package the v0.4.5 patch; commit/push/release only if reque
 **Repo**: https://github.com/witness1993x/agentflow-pipeline
 **Local path**: `/Users/witness/Desktop/experimental/agentflow-git-repo-clone`
 **Last published release**: v0.4.2 (OpenClaw Lark App alignment via official `@larksuite/openclaw-lark`)
-**Pending release**: v0.4.5 (Git hotspot search Lark/TG interaction templates)
+**Pending release**: v0.4.6 (Git hotspot project links + Lark-only boundary clarification)
 
 ### Test count history
 
@@ -38,7 +38,8 @@ What remains: verify/package the v0.4.5 patch; commit/push/release only if reque
 | v0.4.2 | 480 | OpenClaw Lark App alignment via official `@larksuite/openclaw-lark` |
 | v0.4.3 | 480 | Git/GitHub repo delivery trigger cleanup; avoids article-hotspot package overlap |
 | v0.4.4 | 480 | Standardizes this package's terminology as Git 热点搜索 / Git hotspot search |
-| **v0.4.5** | **483** | Adds Git-case TG callback buttons and OpenClaw-forwarded Lark callback handler |
+| v0.4.5 | 483 | Adds Git-case TG callback buttons and OpenClaw-forwarded Lark callback handler |
+| **v0.4.6** | **483** | Adds direct hotspot project/source links and documents Lark-only mode requirements |
 
 ### Current working-tree changes (uncommitted)
 
@@ -232,7 +233,8 @@ grep "agentflow-tg" pyproject.toml
 4. **Done in v0.4.3**: update skill trigger wording to focus on Git/GitHub repo delivery and avoid overlap with the separate article-hotspot package.
 5. **Done in v0.4.4**: standardize search terminology as **Git 热点搜索 / Git hotspot search**; article/content hotspots remain owned by the separate article-hotspot package.
 6. **Done in v0.4.5**: supplement TG/Lark reporting templates and interactions using `case:*` / `git_case_*` vocabulary, not article Gate commands.
-7. **Rebuild skill zip** with all new files (run from framework root):
+7. **Done in v0.4.6**: top Git hotspot rows now include direct `项目链接`; docs clarify only OpenClaw Lark App mode can complete operations fully inside Lark.
+8. **Rebuild skill zip** with all new files (run from framework root):
    ```bash
    rm -rf skill/bundle/src skill/bundle/scripts skill/bundle/templates
    cp -r src skill/bundle/
@@ -243,7 +245,7 @@ grep "agentflow-tg" pyproject.toml
    find skill/bundle -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
    find skill/bundle -name '*.pyc' -delete 2>/dev/null
    rm -rf skill/bundle/src/agentflow_pipeline.egg-info
-   ZIP=dist/agentflow-pipeline-skill-v0.4.5.zip
+   ZIP=dist/agentflow-pipeline-skill-v0.4.6.zip
    ZIP_LATEST=dist/agentflow-pipeline-skill.zip
    rm -f $ZIP $ZIP_LATEST
    ( cd skill && zip -rq ../$ZIP . -x '*.pyc' '__pycache__/*' '*/__pycache__/*' '.DS_Store' '*/.DS_Store' )
@@ -256,20 +258,20 @@ grep "agentflow-tg" pyproject.toml
    git diff --cached --name-only | xargs grep -lE "[0-9]{8,12}:[A-Za-z0-9_-]{30,}" 2>/dev/null  # TG bot token pattern
    # both should be empty
    ```
-9. **Commit + push + GitHub release v0.4.5 if requested**:
+10. **Commit + push + GitHub release v0.4.6 if requested**:
    ```bash
-   git add . && git commit -m "v0.4.5: add Git case Lark and TG interactions
+   git add . && git commit -m "v0.4.6: add Git hotspot project links
 
    Major:
-   - TG scan cards expose case:* buttons for dry-publish/write-stub/snooze/drop
-   - Lark/OpenClaw callback adapter exposes git_case_* actions
-   - notification templates use Git 热点搜索回报 wording
+   - Git 热点搜索 report rows now include direct source/project links
+   - README/SKILL clarify Lark-only operation requires OpenClaw Lark App callbacks
+   - package metadata bumped to v0.4.6
 
    Tests: 483 passing"
    git push origin main
-   gh release create v0.4.5 dist/agentflow-pipeline-skill-v0.4.5.zip dist/agentflow-pipeline-skill.zip \
+   gh release create v0.4.6 dist/agentflow-pipeline-skill-v0.4.6.zip dist/agentflow-pipeline-skill.zip \
      --repo witness1993x/agentflow-pipeline \
-     --title "v0.4.5 — Git case Lark/TG interactions" \
+     --title "v0.4.6 — Git hotspot project links" \
      --notes "..." # see PROGRESS.md or this handoff for content
    ```
 8. **Optional smoke verify** after push (no real install of TG daemon, just dry-run):
@@ -310,25 +312,25 @@ cd /Users/witness/Desktop/experimental/agentflow-git-repo-clone
 python3 -m pytest tests/ -q
 # Expected: 483 passed
 
-# 2. Rebuild skill zip for v0.4.5
+# 2. Rebuild skill zip for v0.4.6
 mkdir -p dist
-ZIP=dist/agentflow-pipeline-skill-v0.4.5.zip
+ZIP=dist/agentflow-pipeline-skill-v0.4.6.zip
 ZIP_LATEST=dist/agentflow-pipeline-skill.zip
 rm -f "$ZIP" "$ZIP_LATEST"
 ( cd skill && zip -rq "../$ZIP" . -x '*.pyc' '__pycache__/*' '*/__pycache__/*' '.DS_Store' '*/.DS_Store' )
 cp "$ZIP" "$ZIP_LATEST"
 
-# 3. Commit + push + create GitHub release v0.4.5 after verification, if requested
+# 3. Commit + push + create GitHub release v0.4.6 after verification, if requested
 
 # 4. Verify release downloadable after publishing:
-curl -sL -o /tmp/test.zip https://github.com/witness1993x/agentflow-pipeline/releases/download/v0.4.5/agentflow-pipeline-skill.zip
+curl -sL -o /tmp/test.zip https://github.com/witness1993x/agentflow-pipeline/releases/download/v0.4.6/agentflow-pipeline-skill.zip
 unzip -l /tmp/test.zip | grep -E "(tg_notifier|tg_callback|case_actions|notification_templates|install\.sh|openclaw\.plugin\.json)" | wc -l
 # Expected: ≥6 (one match per new file in zip)
 ```
 
 ---
 
-## Future work (not blocking v0.4.5)
+## Future work (not blocking v0.4.6)
 
 These are ideas users have hinted at but haven't requested yet:
 
