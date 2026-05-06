@@ -212,7 +212,7 @@ def test_render_promoted_section_one_case_no_more_line() -> None:
             }
         ]
     )
-    assert "**📝 自动 promote 了 1 个新 case** (尚未写代码)" in out
+    assert "**🧭 Git 热点已 promote 1 个 repo case** (尚未写代码)" in out
     assert "`HSP-001` alpha — `cases/HSP-001-alpha`" in out
     assert "more)" not in out
 
@@ -242,7 +242,7 @@ def test_render_promoted_section_five_cases_truncates_with_overflow_line() -> No
         for i in range(5)
     ]
     out = render_promoted_section(cases)
-    assert "**📝 自动 promote 了 5 个新 case** (尚未写代码)" in out
+    assert "**🧭 Git 热点已 promote 5 个 repo case** (尚未写代码)" in out
     # First three present.
     for i in range(3):
         assert f"`HSP-{i:03d}`" in out
@@ -264,7 +264,7 @@ def test_render_promoted_section_empty_returns_empty_string() -> None:
 def test_render_scan_card_byte_for_byte_legacy_layout(
     scan_fixture: dict, shipped_fixture: list[dict]
 ) -> None:
-    """Snapshot-style: the rendered (title, body) must match the v0.3.0 wording."""
+    """Snapshot-style: the rendered (title, body) uses Git 热点搜索 wording."""
     title, body = render_scan_card(
         template=DEFAULT_LARK_SCAN_CARD_TPL,
         scan_result=scan_fixture,
@@ -274,10 +274,10 @@ def test_render_scan_card_byte_for_byte_legacy_layout(
     )
     # Title: opening glyph + brand + parsed HH:MM (the actual HH:MM
     # depends on the test runner's tz, so just match the structure).
-    assert title.startswith("🔎 AgentFlow · 每日热点扫描 (")
+    assert title.startswith("🔎 AgentFlow · Git 热点搜索回报 (")
     assert title.endswith(")")
     # Body: top + shipped + scanned_at sections present, in that order.
-    assert "**📊 扫到 24 unique 候选** · sources: gh=18, hn=7, rd=5" in body
+    assert "**📊 Git 热点搜索: 24 unique repo 候选** · sources: gh=18, hn=7, rd=5" in body
     assert "_合并掉 6 条跨源重复_" in body
     assert "**🔥 Top 3**:" in body
     assert "1. [github] 745★ `sstklen/trump-code`" in body

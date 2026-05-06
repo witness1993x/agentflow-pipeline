@@ -481,17 +481,25 @@ def test_notify_scan_complete_full_path(
     # Parens in title escaped.
     assert "\\(10:00\\)" in text
 
-    # Buttons: framework + 2 ship + 1 promoted + 1 trends = 5 (cap).
+    # Buttons: URL links plus Git-case callback actions. The callback
+    # namespace is `case:*`, distinct from the article package's Gate A/B/C/D.
     rm = payload["reply_markup"]
     flat = [b for r in rm["inline_keyboard"] for b in r]
     labels = [b["text"] for b in flat]
     assert any("framework" in l for l in labels)
     assert any("alpha-repo" in l for l in labels)
     assert any("beta-repo" in l for l in labels)
-    assert any("promoted" in l for l in labels)
+    assert any("Git case" in l for l in labels)
     assert any("scan.md" in l for l in labels)
-    # Total <= 5.
-    assert len(flat) <= 5
+    assert any(b.get("callback_data") == "case:dry-publish:HSP-005" for b in flat)
+    assert any(b.get("callback_data") == "case:write-stub:HSP-005" for b in flat)
+    assert any(b.get("callback_data") == "case:snooze:HSP-005:7d" for b in flat)
+    assert all(
+        not str(b.get("callback_data", "")).startswith(("A:", "B:", "C:", "D:"))
+        for b in flat
+    )
+    # Total <= Telegram notifier cap.
+    assert len(flat) <= tg_notifier._TG_MAX_BUTTONS_TOTAL
 
     # And the templates module was actually consulted with name=tg_scan_card.
     names = [c[1].get("name") for c in fake_templates.calls if c[0] == "resolve_template"]
@@ -522,7 +530,8 @@ def test_notify_scan_complete_no_promoted_no_promoted_button(
     rm = payload.get("reply_markup", {})
     flat = [b for r in rm.get("inline_keyboard", []) for b in r]
     labels = [b["text"] for b in flat]
-    assert not any("promoted" in l for l in labels)
+    assert not any("Git case" in l for l in labels)
+    assert not any("callback_data" in b for b in flat)
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ def test_openclaw_manifest_version_matches_package() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     version = pyproject["project"]["version"]
 
-    assert version == "0.4.2"
+    assert version == "0.4.5"
     for path in MANIFEST_PATHS:
         assert _load_json(path)["version"] == version
 

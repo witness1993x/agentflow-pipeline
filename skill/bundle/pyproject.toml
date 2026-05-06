@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentflow-pipeline"
-version = "0.4.2"
-description = "Hotspot → GitHub → data-source pipeline framework with standalone Lark/TG fallback and OpenClaw Lark App alignment via @larksuite/openclaw-lark."
+version = "0.4.5"
+description = "Git hotspot search and Git/GitHub repo delivery framework with Lark/TG case callbacks, scaffold, probe, publish gates, and monitoring."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -14,7 +14,8 @@ keywords = [
     "agentflow",
     "pipeline",
     "github",
-    "hotspot",
+    "git",
+    "repository",
     "discovery",
     "chainstream",
     "data-source",

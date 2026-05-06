@@ -1,27 +1,35 @@
 ---
 name: agentflow-pipeline
-description: End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by ChainStream (or pluggable) on-chain data sources. Use when the user wants to (a) scan real-time hotspots across GitHub trending / HackerNews / Reddit, (b) decide what on-chain data project to build next, (c) scaffold + write + probe + publish a new GitHub repo end-to-end, (d) install a twice-daily auto-scan scheduler, (e) diff trends history to find new or rising entries. Provides 8 console scripts (agentflow-init / agentflow-pipeline / agentflow-scaffold / agentflow-scan / agentflow-schedule / agentflow-trends / agentflow-tg-listen / agentflow-tg-notify), an 8-gate fail-closed publish safety check, multi-agent friendly architecture, and a swappable DataSourcePlugin protocol so non-ChainStream backends (Bitquery, custom) plug in trivially.
+description: Git hotspot search and Git/GitHub repo delivery framework for turning a selected developer/data-source signal into a scaffolded, tested, publishable GitHub repository. Use when the user asks for Git 热点搜索, GitHub trending/repo signal search, bootstrapping an AgentFlow host repo, creating a repo-shipping case, inferring build/test commands, running probe/publish gates, publishing safely to GitHub, installing Git hotspot scan/schedule automation, or managing post-publish GitHub monitoring. This is not the blog/article hotspot package; content ideation and article publishing should use the separate article workflow. Provides 8 console scripts (agentflow-init / agentflow-pipeline / agentflow-scaffold / agentflow-scan / agentflow-schedule / agentflow-trends / agentflow-tg-listen / agentflow-tg-notify), an 8-gate fail-closed publish safety check, multi-agent friendly architecture, and a swappable DataSourcePlugin protocol so non-ChainStream backends (Bitquery, custom) plug in trivially.
 ---
 
 # AgentFlow Pipeline
 
 This skill packages the `agentflow-pipeline` Python framework — a fully tested
-(480 pytest) end-to-end machine for going from "what crypto/AI
-project should I build next" to a public GitHub repo, with optional twice-daily
-hotspot auto-scan + trends diff.
+(483 pytest) end-to-end machine for going from a selected project idea to a
+public GitHub repository with source code, publish gates, CI scaffolding, and
+post-publish operations. Its scan/trends commands are **Git 热点搜索 / Git
+hotspot search** inputs for repo selection, not a general blog/article
+ideation system.
 
 ## When to use this skill
 
-Invoke this skill when the user asks any of:
+Invoke this skill when the user asks for **Git 热点搜索** or Git/GitHub repo
+delivery work such as:
 
-- "what crypto/AI project is hot right now" / "市场调研" / "找下一个 ship 方向"
-- "scaffold a new pipeline case" / "ship a new repo from this hotspot"
-- "set up a twice-daily auto-scan" / "schedule hotspot tracking"
-- "diff this week's trends vs last week's" / "what's new in trends"
-- "publish this case to GitHub safely" / "auto-publish gate check"
-- Any reference to: ChainStream + GitHub workflow, hotspot → repo pipeline,
-  DataSource plugin, Pump.fun-like memecoin radar, EVM whale tracking,
-  stablecoin depeg monitor — these are first-class examples already shipped.
+- "Git 热点搜索" / "search GitHub trending signals" / "find repo-worthy developer signals"
+- "初始化一个 agentflow host repo" / "set up cases + workspaces for repo shipping"
+- "scaffold a new GitHub repo case" / "turn this project idea into a repo case"
+- "infer install/build/test commands" / "probe this workspace before publish"
+- "run the 8 publish gates" / "dry-run auto-publish safety" / "publish to GitHub safely"
+- "reuse this existing workspace and publish" / "seed CI, runbook, monitoring, issue templates"
+- "schedule Git hotspot searches" / "promote a Git hotspot candidate into a repo case"
+- Any reference to: ChainStream + GitHub workflow, DataSource plugin, GitHub repo
+  scaffold/probe/publish/monitor lifecycle, or the shipped reference repos.
+
+Do **not** invoke this skill for blog/article topic selection, article drafting,
+newsletter operations, or content publishing. Those belong to the separate
+AgentFlow article-hotspot package.
 
 ## OpenClaw plugin compatibility
 
@@ -40,6 +48,17 @@ When run **standalone**, the framework's bundled `lark_notifier` /
 `tg_notifier` modules can still POST to Lark Custom Bot webhooks and
 Telegram Bot APIs directly. Treat those as fallback transports, not as
 the OpenClaw Lark App integration path.
+
+Interaction vocabulary is Git-case specific:
+
+- Telegram buttons use `case:*` callback data, for example
+  `case:dry-publish:HSP-005`, `case:write-stub:HSP-005`,
+  `case:snooze:HSP-005:7d`, and `case:drop:HSP-005`.
+- OpenClaw-forwarded Lark actions use `git_case_*` names:
+  `git_case_dry_publish`, `git_case_write_stub`, `git_case_snooze`,
+  and `git_case_drop`.
+- Do not reuse the article package's `A:*` / `B:*` / `C:*` / `D:*`
+  Telegram callbacks or `lark_gate_*` Lark tool names here.
 
 See `openclaw.plugin.json` for the configSchema this plugin accepts.
 
@@ -69,7 +88,7 @@ ROOT from `--case-dir` so a wrong cwd no longer creates nested workspaces.
 
 ## Quick recipes
 
-### A. "Find what's hot right now"
+### A. "Run Git hotspot search, then pick one to ship"
 
 ```bash
 agentflow-scan \
@@ -89,7 +108,7 @@ mkdir my-data-projects && cd my-data-projects
 agentflow-init .                 # creates cases/, workspaces/, pipeline-pool.md, CLAUDE.md
 ```
 
-### C. "Scaffold a case + go end-to-end"
+### C. "Scaffold a GitHub repo case + go end-to-end"
 
 ```bash
 agentflow-scaffold --hotspot-name "EVM Whale Pulse" --owner me \

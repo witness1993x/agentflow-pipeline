@@ -484,13 +484,19 @@ def _render_promoted_section(promoted: list[dict]) -> list[str]:
     return rendered.split("\n")
 
 
-def _build_tg_case_deep_link(username: str, hotspot_id: str) -> str:
+def _build_tg_case_deep_link(
+    username: str,
+    hotspot_id: str,
+    *,
+    action: str = "dry_publish",
+) -> str:
     """Return a Telegram bot start URL for the Lark CTA bridge."""
     clean_username = username.strip().lstrip("@")
     clean_hotspot_id = hotspot_id.strip()
     if not clean_username or not clean_hotspot_id:
         return ""
-    start_payload = quote(f"case_{clean_hotspot_id}_dry_publish", safe="")
+    clean_action = action.strip().replace("-", "_") or "dry_publish"
+    start_payload = quote(f"case_{clean_hotspot_id}_{clean_action}", safe="")
     return f"https://t.me/{clean_username}?start={start_payload}"
 
 
@@ -522,7 +528,7 @@ def notify_scan_complete(
     Buttons (in order, capped at 5):
       1. ``📚 framework repo``
       2. up to 3 ``⭐ <repo-name>`` buttons (sorted by ``hotspot_id``)
-      3. ``📝 promoted [N]`` when ``auto_promoted_cases`` is non-empty
+      3. ``🧭 去 TG 处理 Git case [N]`` when ``auto_promoted_cases`` is non-empty
          and either a TG bridge username is set or the first case carries
          a ``source_url``
       4. ``📊 查看 scan.md`` when ``trends_view_url`` is set
@@ -596,7 +602,7 @@ def notify_scan_complete(
         ) or first_source
         if promoted_url:
             actions.append(
-                (f"📝 promoted [{len(promoted_cases)}]", promoted_url)
+                (f"🧭 去 TG 处理 Git case [{len(promoted_cases)}]", promoted_url)
             )
     if trends_view_url:
         actions.append(("📊 查看 scan.md", trends_view_url))

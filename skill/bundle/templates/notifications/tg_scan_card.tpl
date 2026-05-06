@@ -1,6 +1,6 @@
-$brand_prefix🔎 AgentFlow · 每日热点扫描$title_suffix
+$brand_prefix🔎 AgentFlow · Git 热点搜索回报$title_suffix
 ---
-*📊 扫到 $unique_count unique 候选* · sources: $sources_brief$dedup_summary
+*📊 Git 热点搜索: $unique_count unique repo 候选* · sources: $sources_brief$dedup_summary
 
 *🔥 Top $top_n_actual*:
 $top_section

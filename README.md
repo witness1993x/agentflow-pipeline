@@ -1,10 +1,10 @@
 # agentflow-pipeline
 
-**End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by [ChainStream](https://chainstream.io) (or pluggable) on-chain data.**
+**Git 热点搜索 and Git/GitHub repo delivery framework for turning selected developer/data-source signals into shipped GitHub repositories backed by [ChainStream](https://chainstream.io) or pluggable on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-480%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.2-blue)]()
+[![tests](https://img.shields.io/badge/tests-483%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.5-blue)]()
 
-> Why this exists: the path from "I noticed Pump.fun radars are trending" to "a public GitHub repo doing something useful with that signal" usually involves 30+ disconnected manual steps — gh search, HN scraping, Reddit scraping, dedup, market analysis, scaffold, write, npm/pip install, build, test, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 8 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer.
+> Why this exists: this package owns **Git 热点搜索**: finding developer/repo signals that are worth turning into a GitHub project, then carrying that project through build/test/probe/publish/monitoring. That path usually involves 30+ disconnected manual steps — GitHub/HN/Reddit signal search, repo planning, scaffold, source workspace setup, build command inference, npm/pip install, tests, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 8 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer. It is intentionally different from the separate AgentFlow blog/article hotspot package, which owns article/content hotspots.
 >
 > Battle-tested on three real shipped repos (links below).
 
@@ -17,16 +17,18 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Six console scripts now on PATH:
+Eight console scripts now on PATH:
 
 | Script | Purpose |
 |---|---|
 | `agentflow-init <dir>` | Bootstrap a host project (`cases/`, `workspaces/`, `pipeline-pool.md`, `CLAUDE.md`, `.agentflow.toml`) |
 | `agentflow-scaffold` | Generate a new case skeleton (5 files: intake / gate yaml / memo / probe-run / review) |
 | `agentflow-pipeline` | Main runner — `inspect / discover / data-probe / kafka-probe / probe / publish / pool` modes |
-| `agentflow-scan` | Single-shot multi-source hotspot scan → `<root>/trends/YYYY-MM-DD-HH/scan.{md,json}` |
+| `agentflow-scan` | Single-shot multi-source Git hotspot search → `<root>/trends/YYYY-MM-DD-HH/scan.{md,json}` |
 | `agentflow-trends` | Diff scan history, detect new / rising entries, optionally promote to a case |
 | `agentflow-schedule` | Generate launchd plist (macOS) or systemd timer (linux) for twice-daily auto-scan |
+| `agentflow-tg-notify` | Standalone Telegram outbound notification fallback |
+| `agentflow-tg-listen` | Standalone Telegram callback daemon for case actions |
 
 ## Quick tour
 
@@ -35,11 +37,11 @@ Six console scripts now on PATH:
 mkdir my-data-projects && cd my-data-projects
 agentflow-init .
 
-# 2. Find what's hot (multi-source, dedup, no token needed for HN/Reddit)
+# 2. Optional: run Git hotspot search (multi-source, dedup, no token needed for HN/Reddit)
 agentflow-scan --sources github,hackernews,reddit \
   --queries "solana ai agent,evm whale alert,defi mcp server" --top-n 30
 
-# 3. Scaffold a case from a hotspot
+# 3. Scaffold a GitHub repo delivery case
 agentflow-scaffold --hotspot-name "EVM Whale Pulse" --owner me \
   --project-shape data_pipeline --status probe
 
@@ -58,7 +60,7 @@ bash scripts/install_schedule.sh --apply
 
 ## Key features
 
-- **Multi-source discovery**: GitHub (gh CLI), HackerNews (Algolia), Reddit (JSON), Jina, X/Twitter — token-free where possible, graceful per-source degradation
+- **Git 热点搜索 / Git hotspot search**: GitHub (gh CLI), HackerNews (Algolia), Reddit (JSON), Jina, X/Twitter — token-free where possible, graceful per-source degradation
 - **Cross-source candidate dedup**: URL canonicalize + score merge across `github_search / jina_search / hackernews / reddit` etc.
 - **Pluggable DataSource**: Swap ChainStream for Bitquery (or your own) by satisfying the `DataSourcePlugin` Protocol; CLI `--data-source <name>` or `AGENTFLOW_DATA_SOURCE` env
 - **8-gate fail-closed publish**: readiness=ready, never-published-before, repo_plan filled, no veto, no kill-signals triggered, chainstream_fit verdict pass — all checked, all opt-out only via explicit double flag
@@ -69,7 +71,7 @@ bash scripts/install_schedule.sh --apply
 - **Trends diff**: `agentflow-trends diff` finds new / rising entries across scan history, optionally `promote --apply` straight into a new case
 - **Post-publish scaffolding**: CI workflow + ISSUE/PR templates + CODEOWNERS + RUNBOOK + MONITORING + README badges all rendered into the freshly created repo
 - **Real monitoring hooks** (opt-in): `gh secret set` + branch protection + dependabot + Grafana dashboard + PagerDuty service; all default to dry-run; `integration_key` redacted in logs / state
-- **480 pytest, 0 flaky, all offline** (no network calls in tests)
+- **483 pytest, 0 flaky, all offline** (no network calls in tests)
 
 ## Real shipped reference repos
 
@@ -155,20 +157,26 @@ for the full env reference + macOS launchd PATH/env gotchas.
 
 ## TG callback (interactive HITL)
 
-After receiving a Lark / TG card, click an inline button to invoke a
-framework action **without leaving the chat**:
+After a Git 热点搜索 card promotes a repo case, TG cards include inline buttons
+that invoke framework actions **without leaving the chat**:
 
-- **`📊 dry-publish`** — runs the 8-gate `check_auto_publish_safety`
+- **`✅ 8 gates`** — runs the 8-gate `check_auto_publish_safety`
   for that case; replies with pass/fail + blocker list
-- **`🤖 write-stub`** — generates a minimal TypeScript skeleton (uses
+- **`🧱 write stub`** — generates a minimal TypeScript skeleton (uses
   Claude Haiku via `ANTHROPIC_API_KEY` if set; static fallback otherwise)
-- **`🚮 drop`** — marks the case `final_status=drop` + appends review log
-- **`💤 snooze 7d`** — pushes `next_review_date` forward 7 days
+- **`😴 snooze 7d`** — pushes `next_review_date` forward 7 days
+- **`🗑 drop`** — marks the case `final_status=drop` + appends review log
 
-In OpenClaw Lark App mode, use the official `openclaw-lark` channel for real
-Lark card interaction and permission policy. The Telegram listener below is a
-standalone fallback for deployments that do not run OpenClaw's Lark App
-channel.
+The callback namespace is `case:*` (`case:dry-publish:HSP-005`,
+`case:write-stub:HSP-005`, `case:snooze:HSP-005:7d`, `case:drop:HSP-005`).
+This deliberately does not reuse the article package's Gate vocabulary
+(`A:*`, `B:*`, `C:*`, `D:*`) or its `lark_gate_*` tool names.
+
+In OpenClaw Lark App mode, the official `openclaw-lark` channel owns the Lark
+gateway and permission policy. It can forward card actions into
+`agentflow_pipeline.lark_callback.handle_event` using the Git-specific action
+names `git_case_dry_publish`, `git_case_write_stub`, `git_case_snooze`, and
+`git_case_drop`.
 
 ### Setup (one-time)
 
@@ -204,8 +212,8 @@ systemctl --user status com.agentflow.tg-listener.service  # linux
 ### Standalone Lark → TG deep link bridge
 
 Lark Custom Bot is push-only — buttons can't trigger callbacks. Outside
-OpenClaw, configure the daily scan with
-`--lark-cta-tg-bot @your_bot_username`: the auto-promoted-cases button
+OpenClaw, configure the Git 热点搜索 run with
+`--lark-cta-tg-bot @your_bot_username`: the promoted Git-case button
 on the Lark card will become a deep link
 `https://t.me/your_bot?start=case_HSP-XXX_dry_publish`. The
 `agentflow-tg-listen` daemon handles that `/start` payload and dispatches
@@ -279,8 +287,8 @@ After install, the daily 10:00 run will:
 1. Scan all configured sources → write `<root>/trends/YYYY-MM-DD-10/scan.{md,json}`
 2. Detect new high-engagement entries vs the past 14 scans
 3. Auto-scaffold up to 1 new case (the 5-tuple in `<root>/cases/HSP-XXX-...`)
-4. Post a Lark card containing top hotspots + shipped repos + the new case
-   listing + a "📝 promoted [N]" button linking to the source URL
+4. Post a Lark card containing top Git hotspots + shipped repos + the new case
+   listing + a "🧭 去 TG 处理 Git case [N]" button linking to TG or the source URL
 
 You then review the auto-generated case yamls — at your leisure — and decide
 which (if any) to write code for and `--auto-publish` later.
@@ -367,7 +375,7 @@ src/agentflow_pipeline/
 └── templates/                      # case scaffolding + post-publish templates
 ```
 
-480 pytest covering every module, zero network calls.
+483 pytest covering every module, zero network calls.
 
 ## License
 

@@ -561,7 +561,7 @@ def _build_url_actions_for_tg(
     Order:
       1. ``framework repo`` link
       2. up to 3 ``<repo-name>`` links (sorted by ``hotspot_id``)
-      3. ``promoted [N]`` link (first case's ``source_url``) when present
+      3. ``Git case [N]`` link (first case's ``source_url``) when present
       4. ``查看 scan.md`` link when ``trends_view_url`` is set
 
     Total capped at ``max_total`` (default 5) so the keyboard stays
@@ -581,13 +581,35 @@ def _build_url_actions_for_tg(
         first_source = str(promoted_cases[0].get("source_url") or "")
         if first_source:
             actions.append(
-                (f"promoted [{len(promoted_cases)}]", first_source)
+                (f"🧭 Git case [{len(promoted_cases)}]", first_source)
             )
     if trends_view_url:
         actions.append(("scan.md", trends_view_url))
     if len(actions) > max_total:
         actions = actions[:max_total]
     return actions
+
+
+def _build_callback_actions_for_tg(
+    *,
+    promoted_cases: list[dict],
+) -> list[tuple[str, str]]:
+    """Build Git-case callback buttons for the first promoted case.
+
+    The callback namespace is deliberately ``case:*`` so it cannot collide with
+    the article package's ``A/B/C/D:*`` Gate vocabulary.
+    """
+    if not promoted_cases:
+        return []
+    hotspot_id = str(promoted_cases[0].get("hotspot_id") or "").strip()
+    if not hotspot_id:
+        return []
+    return [
+        ("✅ 8 gates", f"case:dry-publish:{hotspot_id}"),
+        ("🧱 write stub", f"case:write-stub:{hotspot_id}"),
+        ("😴 snooze 7d", f"case:snooze:{hotspot_id}:7d"),
+        ("🗑 drop", f"case:drop:{hotspot_id}"),
+    ]
 
 
 def notify_scan_complete(
@@ -633,11 +655,13 @@ def notify_scan_complete(
         promoted_cases=promoted_cases,
         trends_view_url=trends_view_url,
     )
+    callback_actions = _build_callback_actions_for_tg(promoted_cases=promoted_cases)
 
     return send_card(
         title=title,
         body_md=body_md,
         url_actions=url_actions,
+        callback_actions=callback_actions,
         chat_id=chat_id,
         dry_run=dry_run,
     )

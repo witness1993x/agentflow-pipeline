@@ -1,4 +1,4 @@
-"""agentflow-pipeline — hotspot → GitHub → data-source pipeline framework.
+"""agentflow-pipeline — Git hotspot search → GitHub repo delivery framework.
 
 Public re-exports kept stable so host projects can do
 `from agentflow_pipeline import dedup_candidates, run_pool_auto_advance, ...`
@@ -51,6 +51,7 @@ from .lark_notifier import (
     send_card,
     send_text,
 )
+from .lark_callback import handle_event as handle_lark_event
 from .notification_templates import (
     DEFAULT_LARK_SCAN_CARD_TPL,
     DEFAULT_TG_SCAN_CARD_TPL,
@@ -139,6 +140,7 @@ __all__ = [
     "notify_scan_complete",
     "send_card",
     "send_text",
+    "handle_lark_event",
     # notification_templates
     "DEFAULT_LARK_SCAN_CARD_TPL",
     "DEFAULT_TG_SCAN_CARD_TPL",

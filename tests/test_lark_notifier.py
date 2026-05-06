@@ -347,7 +347,7 @@ def test_notify_scan_complete_happy_path(
     body = payload["card"]["elements"][0]["text"]["content"]
 
     # Top section.
-    assert "扫到 24 unique" in body
+    assert "Git 热点搜索: 24 unique repo 候选" in body
     assert "sstklen/trump-code" in body
     assert "Show HN: tiny vector DB" in body
     # Ship'd section.
@@ -366,7 +366,7 @@ def test_notify_scan_complete_happy_path(
 
     # Title and accent.
     title = payload["card"]["header"]["title"]["content"]
-    assert "每日热点扫描" in title
+    assert "Git 热点搜索回报" in title
     assert payload["card"]["header"]["template"] == "blue"  # 24 unique → blue
 
 
@@ -388,7 +388,7 @@ def test_notify_scan_complete_empty_shipped(
 
 
 # ---------------------------------------------------------------------------
-# 12. notify_scan_complete with zero hotspots → grey + "暂无可写热点"
+# 12. notify_scan_complete with zero Git hotspots → grey + no repo candidates
 # ---------------------------------------------------------------------------
 def test_notify_scan_complete_zero_unique(
     clean_env, monkeypatch: pytest.MonkeyPatch
@@ -411,7 +411,7 @@ def test_notify_scan_complete_zero_unique(
     payload = spy.calls[0]["payload"]
     assert payload["card"]["header"]["template"] == "grey"
     body = payload["card"]["elements"][0]["text"]["content"]
-    assert "暂无可写热点" in body
+    assert "暂无可落成 repo 的候选" in body
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +537,7 @@ def test_notify_scan_complete_omitting_auto_promoted_matches_legacy(
     # All three renders must be byte-identical to the legacy baseline.
     assert bodies[0] == bodies[1] == bodies[2]
     # And critically must NOT mention the auto-promote section.
-    assert "自动 promote" not in bodies[0]
+    assert "Git 热点已 promote" not in bodies[0]
     # Buttons identical too — same labels in the same order.
     label_sets = []
     for payload in payloads:
@@ -615,7 +615,7 @@ def test_notify_scan_complete_one_promoted_case(
     body = payload["card"]["elements"][0]["text"]["content"]
 
     # Section present with the right header + entry.
-    assert "**📝 自动 promote 了 1 个新 case** (尚未写代码)" in body
+    assert "**🧭 Git 热点已 promote 1 个 repo case** (尚未写代码)" in body
     assert "`HSP-005`" in body
     assert "evm-arb-bot" in body
     # Relative path shown — drops the absolute prefix.
@@ -629,9 +629,11 @@ def test_notify_scan_complete_one_promoted_case(
         el for el in payload["card"]["elements"] if el.get("tag") == "action"
     )
     labels = [a["text"]["content"] for a in action["actions"]]
-    assert "📝 promoted [1]" in labels
+    assert "🧭 去 TG 处理 Git case [1]" in labels
     promoted_btn = next(
-        a for a in action["actions"] if a["text"]["content"] == "📝 promoted [1]"
+        a
+        for a in action["actions"]
+        if a["text"]["content"] == "🧭 去 TG 处理 Git case [1]"
     )
     assert promoted_btn["url"] == "https://github.com/example/evm-arb-bot"
 
@@ -669,7 +671,9 @@ def test_notify_scan_complete_promoted_case_can_link_to_tg_bot(
         el for el in payload["card"]["elements"] if el.get("tag") == "action"
     )
     promoted_btn = next(
-        a for a in action["actions"] if a["text"]["content"] == "📝 promoted [1]"
+        a
+        for a in action["actions"]
+        if a["text"]["content"] == "🧭 去 TG 处理 Git case [1]"
     )
     assert promoted_btn["url"] == (
         "https://t.me/agentflow_bot?start=case_HSP-005_dry_publish"
@@ -708,7 +712,7 @@ def test_notify_scan_complete_five_promoted_cases_truncates(
     body = payload["card"]["elements"][0]["text"]["content"]
 
     # Header reports the full count, not the truncated 3.
-    assert "**📝 自动 promote 了 5 个新 case** (尚未写代码)" in body
+    assert "**🧭 Git 热点已 promote 5 个 repo case** (尚未写代码)" in body
     # First three cases listed.
     for i in range(3):
         assert f"HSP-{100 + i:03d}" in body
@@ -723,9 +727,11 @@ def test_notify_scan_complete_five_promoted_cases_truncates(
         el for el in payload["card"]["elements"] if el.get("tag") == "action"
     )
     labels = [a["text"]["content"] for a in action["actions"]]
-    assert "📝 promoted [5]" in labels
+    assert "🧭 去 TG 处理 Git case [5]" in labels
     promoted_btn = next(
-        a for a in action["actions"] if a["text"]["content"] == "📝 promoted [5]"
+        a
+        for a in action["actions"]
+        if a["text"]["content"] == "🧭 去 TG 处理 Git case [5]"
     )
     # Links to the FIRST case's source_url.
     assert promoted_btn["url"] == "https://example.com/src/0"
@@ -762,7 +768,7 @@ def test_notify_scan_complete_promoted_without_source_url_skips_button(
     body = payload["card"]["elements"][0]["text"]["content"]
 
     # Body section still rendered.
-    assert "**📝 自动 promote 了 1 个新 case** (尚未写代码)" in body
+    assert "**🧭 Git 热点已 promote 1 个 repo case** (尚未写代码)" in body
     assert "`HSP-009`" in body
     assert "no-url-case" in body
     assert "cases/HSP-009-no-url" in body
@@ -772,7 +778,7 @@ def test_notify_scan_complete_promoted_without_source_url_skips_button(
         el for el in payload["card"]["elements"] if el.get("tag") == "action"
     )
     labels = [a["text"]["content"] for a in action["actions"]]
-    assert not any(l.startswith("📝 promoted") for l in labels)
+    assert not any(l.startswith("🧭 去 TG 处理 Git case") for l in labels)
 
 
 # ---------------------------------------------------------------------------
@@ -823,6 +829,6 @@ def test_notify_scan_complete_promote_button_priority_in_cap(
     # Order: framework -> 3 shipped (HSP-000..002) -> promoted -> [trends DROPPED].
     assert labels[0] == "📚 framework repo"
     assert all(labels[i].startswith("⭐ repo-") for i in (1, 2, 3))
-    assert labels[4] == "📝 promoted [1]"
+    assert labels[4] == "🧭 去 TG 处理 Git case [1]"
     # Trends-view button got pushed past the cap.
     assert "📊 查看 scan.md" not in labels

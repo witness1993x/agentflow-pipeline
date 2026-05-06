@@ -448,10 +448,11 @@ Each promoted case will contain the standard 5-tuple
 pre-filled. Open `02-pipeline-gate.yaml` to see the auto-filled
 `owner` (defaults to `agentflow-auto`) and `status: probe`.
 
-The Lark card from the same scan will include a `📝 自动 promote 了 N
-个 case` section + a `📝 promoted [N]` button linking back to the
-source URL, so you can spot the new cases without grepping the
-filesystem.
+The Lark card from the same Git 热点搜索 run will include a
+`🧭 Git 热点已 promote N 个 repo case` section plus a
+`🧭 去 TG 处理 Git case [N]` button when the TG bridge is configured
+(otherwise it links back to the source URL), so you can spot the new
+cases without grepping the filesystem.
 
 ### Disable promotion without uninstalling the schedule
 

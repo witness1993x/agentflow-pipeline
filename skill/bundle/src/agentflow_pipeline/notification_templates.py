@@ -76,9 +76,9 @@ __all__ = [
 # scans still get a usable card; see :func:`render_scan_card` for the
 # zero-count branch which falls back to a compact legacy layout.
 _ZERO_UNIQUE_TPL = (
-    "$brand_prefix🔎 AgentFlow · 每日热点扫描$title_suffix\n"
+    "$brand_prefix🔎 AgentFlow · Git 热点搜索回报$title_suffix\n"
     "---\n"
-    "**📊 今日扫描完成: 暂无可写热点** (上游空 / filter 过窄 / 配额耗尽)\n"
+    "**📊 今日 Git 热点搜索完成: 暂无可落成 repo 的候选** (上游空 / filter 过窄 / 配额耗尽)\n"
     "\n"
     "sources: $sources_brief\n"
     "\n"
@@ -87,9 +87,9 @@ _ZERO_UNIQUE_TPL = (
 
 
 DEFAULT_LARK_SCAN_CARD_TPL = (
-    "$brand_prefix🔎 AgentFlow · 每日热点扫描$title_suffix\n"
+    "$brand_prefix🔎 AgentFlow · Git 热点搜索回报$title_suffix\n"
     "---\n"
-    "**📊 扫到 $unique_count unique 候选** · sources: $sources_brief"
+    "**📊 Git 热点搜索: $unique_count unique repo 候选** · sources: $sources_brief"
     "$dedup_summary\n"
     "\n"
     "**🔥 Top $top_n_actual**:\n"
@@ -106,9 +106,9 @@ DEFAULT_LARK_SCAN_CARD_TPL = (
 # avoid the per-character escape minefield; users can override with
 # their own ``tg_scan_card.tpl``.
 DEFAULT_TG_SCAN_CARD_TPL = (
-    "$brand_prefix🔎 AgentFlow · 每日热点扫描$title_suffix\n"
+    "$brand_prefix🔎 AgentFlow · Git 热点搜索回报$title_suffix\n"
     "---\n"
-    "*📊 扫到 $unique_count unique 候选* · sources: $sources_brief"
+    "*📊 Git 热点搜索: $unique_count unique repo 候选* · sources: $sources_brief"
     "$dedup_summary\n"
     "\n"
     "*🔥 Top $top_n_actual*:\n"
@@ -265,7 +265,7 @@ def render_promoted_section(promoted_cases: list[dict]) -> str:
         return ""
 
     lines: list[str] = [
-        f"**📝 自动 promote 了 {len(cases)} 个新 case** (尚未写代码)"
+        f"**🧭 Git 热点已 promote {len(cases)} 个 repo case** (尚未写代码)"
     ]
     show = cases[:3]
     for case in show:

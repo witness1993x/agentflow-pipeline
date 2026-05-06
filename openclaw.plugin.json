@@ -1,8 +1,8 @@
 {
   "id": "agentflow-pipeline",
   "name": "AgentFlow Pipeline",
-  "version": "0.4.2",
-  "description": "Hotspot → GitHub → data-source pipeline framework. Standalone mode provides webhook/TG notification fallback; OpenClaw Lark App integration requires the official @larksuite/openclaw-lark Feishu channel plugin.",
+  "version": "0.4.5",
+  "description": "Git hotspot search and Git/GitHub repo delivery framework. Use for Git 热点搜索, Git case Lark/TG callbacks, and scaffold/probe/publish/monitor lifecycle; use the separate article-hotspot package for blog/content workflows.",
   "channels": [],
   "skills": ["./skill"],
   "configSchema": {
@@ -16,7 +16,7 @@
       "auto_promote": {
         "type": "boolean",
         "default": false,
-        "description": "Enable level-B auto-promote in scheduled scans"
+        "description": "Enable level-B auto-promote from scheduled Git hotspot searches into GitHub repo delivery cases"
       },
       "auto_promote_min_engagement": {
         "type": "integer",
@@ -47,11 +47,12 @@
   },
   "channelConfigs": {},
   "entryPoints": {
-    "scan":     { "command": "agentflow-scan",     "description": "One-shot multi-source hotspot scan" },
-    "scaffold": { "command": "agentflow-scaffold", "description": "Generate a new case skeleton" },
-    "pipeline": { "command": "agentflow-pipeline", "description": "Main runner" },
+    "scan":     { "command": "agentflow-scan",     "description": "One-shot multi-source Git hotspot search" },
+    "scaffold": { "command": "agentflow-scaffold", "description": "Generate a GitHub repo delivery case skeleton" },
+    "pipeline": { "command": "agentflow-pipeline", "description": "GitHub repo probe/publish runner" },
     "schedule": { "command": "agentflow-schedule", "description": "Generate launchd plist / systemd timer" },
     "trends":   { "command": "agentflow-trends",   "description": "Diff scan history" },
-    "init":     { "command": "agentflow-init",     "description": "Bootstrap a host project" }
+    "init":     { "command": "agentflow-init",     "description": "Bootstrap a host project" },
+    "lark_callback": { "handler": "agentflow_pipeline.lark_callback:handle_event", "description": "Handle OpenClaw-forwarded Git case Lark actions with git_case_* vocabulary" }
   }
 }
