@@ -92,6 +92,15 @@
 - 回写 `pre_build_analysis.chainstream_fit.graphql_probe`
 - 回写 `execution_state.data_probe`
 
+Reference:
+
+- ChainStream Docs: https://docs.chainstream.io/
+- GraphQL overview: https://docs.chainstream.io/en/graphql/getting-started/overview
+- First query guide: https://docs.chainstream.io/en/graphql/getting-started/first-query
+- Access methods: https://docs.chainstream.io/en/docs/access-methods/overview
+- GraphQL IDE: https://ide.chainstream.io
+- LLM reference index: https://docs.chainstream.io/llms.txt
+
 安全约束：
 
 - 不会打印 API key

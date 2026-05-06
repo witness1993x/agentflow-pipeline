@@ -40,7 +40,7 @@ What remains: finish v0.4.7 test/package/commit/push after verification.
 | v0.4.4 | 480 | Standardizes this package's terminology as Git 热点搜索 / Git hotspot search |
 | v0.4.5 | 483 | Adds Git-case TG callback buttons and OpenClaw-forwarded Lark callback handler |
 | v0.4.6 | 483 | Adds direct hotspot project/source links and documents Lark-only mode requirements |
-| **v0.4.7** | **489** | Adds OpenClaw Lark App interactive cards and ChainStream `fork-rewrite` action |
+| **v0.4.7** | **494** | Adds OpenClaw Lark App interactive cards, ChainStream `fork-rewrite`, and a local Lark bridge daemon |
 
 ### Current working-tree changes (uncommitted)
 

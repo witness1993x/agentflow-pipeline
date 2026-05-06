@@ -42,6 +42,11 @@
         "type": "string",
         "default": "@larksuite/openclaw-lark",
         "description": "Companion OpenClaw Feishu/Lark channel plugin required for Lark App mode."
+      },
+      "lark_bridge_url": {
+        "type": "string",
+        "default": "http://127.0.0.1:7871/api/git-case-commands",
+        "description": "Local agentflow-lark-bridge command endpoint for OpenClaw Lark App callbacks."
       }
     }
   },
@@ -54,6 +59,7 @@
     "trends":   { "command": "agentflow-trends",   "description": "Diff scan history" },
     "init":     { "command": "agentflow-init",     "description": "Bootstrap a host project" },
     "lark_scan_card": { "handler": "agentflow_pipeline.lark_callback:build_scan_interactive_card", "description": "Render OpenClaw Lark App interactive Git hotspot cards with git_case_* action buttons" },
+    "lark_bridge": { "command": "agentflow-lark-bridge", "description": "Run the localhost OpenClaw/Lark command bridge for git_case_* callbacks" },
     "lark_callback": { "handler": "agentflow_pipeline.lark_callback:handle_event", "description": "Handle OpenClaw-forwarded Git case Lark actions with git_case_* vocabulary, including ChainStream fork-rewrite" }
   }
 }

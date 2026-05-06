@@ -56,6 +56,7 @@ from .lark_callback import (
     build_scan_interactive_card,
     handle_event as handle_lark_event,
 )
+from .lark_bridge import bridge_descriptor, dispatch_bridge_command
 from .notification_templates import (
     DEFAULT_LARK_SCAN_CARD_TPL,
     DEFAULT_TG_SCAN_CARD_TPL,
@@ -146,6 +147,8 @@ __all__ = [
     "send_text",
     "handle_lark_event",
     "build_scan_interactive_card",
+    "bridge_descriptor",
+    "dispatch_bridge_command",
     # notification_templates
     "DEFAULT_LARK_SCAN_CARD_TPL",
     "DEFAULT_TG_SCAN_CARD_TPL",

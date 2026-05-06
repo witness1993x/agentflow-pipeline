@@ -70,7 +70,7 @@ Sequence:
   1. Pre-flight (Python 3.11+, git, gh)
   2. Create / reuse venv
   3. pip install -e (this dir or ./bundle/)
-  4. Verify console scripts (agentflow-scan/scaffold/pipeline/schedule/trends/init)
+  4. Verify console scripts (agentflow-scan/scaffold/pipeline/schedule/trends/init/lark-bridge)
   5. Detect OpenClaw skill mode (~/.claude/skills/agentflow-pipeline or ~/.openclaw/skills)
   6. Lark env (cp .env.lark.example .env if needed; pause for user fill)
   7. Telegram env (optional)
@@ -210,6 +210,7 @@ REQUIRED_SCRIPTS=(
 OPTIONAL_SCRIPTS=(
     agentflow-tg-notify
     agentflow-tg-listen
+    agentflow-lark-bridge
 )
 
 MISSING=0

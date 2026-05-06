@@ -238,9 +238,15 @@ def test_handle_fork_rewrite_creates_chainstream_workspace(
     assert (workspace / "src" / "chainstream-probe.ts").is_file()
     assert (workspace / ".env.chainstream.example").is_file()
     assert (workspace / "CHAINSTREAM_REWRITE.md").is_file()
-    assert "CHAINSTREAM_API_KEY" in (
-        workspace / ".env.chainstream.example"
-    ).read_text(encoding="utf-8")
+    env_example = (workspace / ".env.chainstream.example").read_text(
+        encoding="utf-8"
+    )
+    assert "CHAINSTREAM_API_KEY" in env_example
+    assert "https://docs.chainstream.io/" in env_example
+    runbook = (workspace / "CHAINSTREAM_REWRITE.md").read_text(encoding="utf-8")
+    assert "https://docs.chainstream.io/en/graphql/getting-started/overview" in runbook
+    assert "https://docs.chainstream.io/llms.txt" in runbook
+    assert "https://ide.chainstream.io" in runbook
     assert any(
         fu.get("kind") == "chainstream_rewrite" for fu in result["follow_up"]
     )

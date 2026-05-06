@@ -40,6 +40,7 @@ def test_openclaw_manifest_documents_official_lark_companion() -> None:
         assert props["lark_integration_mode"]["default"] == "standalone_webhook"
         assert "openclaw_lark_channel" in props["lark_integration_mode"]["enum"]
         assert props["openclaw_lark_plugin"]["default"] == "@larksuite/openclaw-lark"
+        assert props["lark_bridge_url"]["default"].endswith("/api/git-case-commands")
 
 
 def test_openclaw_manifest_exposes_lark_card_and_callback_handlers() -> None:
@@ -54,3 +55,4 @@ def test_openclaw_manifest_exposes_lark_card_and_callback_handlers() -> None:
             entry_points["lark_callback"]["handler"]
             == "agentflow_pipeline.lark_callback:handle_event"
         )
+        assert entry_points["lark_bridge"]["command"] == "agentflow-lark-bridge"

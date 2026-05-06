@@ -56,6 +56,18 @@ SNOOZE_RE = re.compile(r"^(\d{1,2})d$")
 SUMMARY_MAX = 200
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_MAX_TOKENS = 4000
+CHAINSTREAM_DOCS_URL = "https://docs.chainstream.io/"
+CHAINSTREAM_GRAPHQL_OVERVIEW_URL = (
+    "https://docs.chainstream.io/en/graphql/getting-started/overview"
+)
+CHAINSTREAM_FIRST_QUERY_URL = (
+    "https://docs.chainstream.io/en/graphql/getting-started/first-query"
+)
+CHAINSTREAM_ACCESS_METHODS_URL = (
+    "https://docs.chainstream.io/en/docs/access-methods/overview"
+)
+CHAINSTREAM_LLMS_URL = "https://docs.chainstream.io/llms.txt"
+CHAINSTREAM_GRAPHQL_IDE_URL = "https://ide.chainstream.io"
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +588,8 @@ def _chainstream_rewrite_files(config: Dict[str, Any]) -> Dict[str, str]:
     )
     env_example = (
         "# Required for the ChainStream-backed rewrite.\n"
+        "# Docs: https://docs.chainstream.io/\n"
+        "# GraphQL IDE: https://ide.chainstream.io\n"
         "CHAINSTREAM_API_KEY=\n"
         "CHAINSTREAM_ENDPOINT=https://graphql.chainstream.io/graphql\n"
     )
@@ -594,6 +608,14 @@ def _chainstream_rewrite_files(config: Dict[str, Any]) -> Dict[str, str]:
         "## Notes\n\n"
         "This rewrite adds a concrete ChainStream GraphQL client and a minimal\n"
         "limit=1 probe. Keep API keys in env/GitHub Secrets only.\n"
+        "\n"
+        "## References\n\n"
+        f"- ChainStream Docs: {CHAINSTREAM_DOCS_URL}\n"
+        f"- GraphQL Overview: {CHAINSTREAM_GRAPHQL_OVERVIEW_URL}\n"
+        f"- First Query: {CHAINSTREAM_FIRST_QUERY_URL}\n"
+        f"- Access Methods: {CHAINSTREAM_ACCESS_METHODS_URL}\n"
+        f"- GraphQL IDE: {CHAINSTREAM_GRAPHQL_IDE_URL}\n"
+        f"- LLM reference index: {CHAINSTREAM_LLMS_URL}\n"
     )
     return {
         "src/chainstream-client.ts": client_ts,

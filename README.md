@@ -2,9 +2,9 @@
 
 **Git 热点搜索 and Git/GitHub repo delivery framework for turning selected developer/data-source signals into shipped GitHub repositories backed by [ChainStream](https://chainstream.io) or pluggable on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-489%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.7-blue)]()
+[![tests](https://img.shields.io/badge/tests-494%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.7-blue)]()
 
-> Why this exists: this package owns **Git 热点搜索**: finding developer/repo signals that are worth turning into a GitHub project, then carrying that project through build/test/probe/publish/monitoring. That path usually involves 30+ disconnected manual steps — GitHub/HN/Reddit signal search, repo planning, scaffold, source workspace setup, build command inference, npm/pip install, tests, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 8 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer. It is intentionally different from the separate AgentFlow blog/article hotspot package, which owns article/content hotspots.
+> Why this exists: this package owns **Git 热点搜索**: finding developer/repo signals that are worth turning into a GitHub project, then carrying that project through build/test/probe/publish/monitoring. That path usually involves 30+ disconnected manual steps — GitHub/HN/Reddit signal search, repo planning, scaffold, source workspace setup, build command inference, npm/pip install, tests, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 9 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer. It is intentionally different from the separate AgentFlow blog/article hotspot package, which owns article/content hotspots.
 >
 > Battle-tested on three real shipped repos (links below).
 
@@ -17,7 +17,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Eight console scripts now on PATH:
+Nine console scripts now on PATH:
 
 | Script | Purpose |
 |---|---|
@@ -29,6 +29,7 @@ Eight console scripts now on PATH:
 | `agentflow-schedule` | Generate launchd plist (macOS) or systemd timer (linux) for twice-daily auto-scan |
 | `agentflow-tg-notify` | Standalone Telegram outbound notification fallback |
 | `agentflow-tg-listen` | Standalone Telegram callback daemon for case actions |
+| `agentflow-lark-bridge` | Local OpenClaw/Lark App command bridge for `git_case_*` callbacks |
 
 ## Quick tour
 
@@ -71,7 +72,7 @@ bash scripts/install_schedule.sh --apply
 - **Trends diff**: `agentflow-trends diff` finds new / rising entries across scan history, optionally `promote --apply` straight into a new case
 - **Post-publish scaffolding**: CI workflow + ISSUE/PR templates + CODEOWNERS + RUNBOOK + MONITORING + README badges all rendered into the freshly created repo
 - **Real monitoring hooks** (opt-in): `gh secret set` + branch protection + dependabot + Grafana dashboard + PagerDuty service; all default to dry-run; `integration_key` redacted in logs / state
-- **489 pytest, 0 flaky, all offline** (no network calls in tests)
+- **494 pytest, 0 flaky, all offline** (no network calls in tests)
 
 ## Real shipped reference repos
 
@@ -82,6 +83,19 @@ These three were shipped end-to-end with this framework on different days, delib
 | [chainstream-launch-radar](https://github.com/witness1993x/chainstream-launch-radar) | TypeScript | Solana DEXTrades | Memecoin launch monitor |
 | [whale-pulse-evm](https://github.com/witness1993x/whale-pulse-evm) | TypeScript | EVM Transfers (4 chains) | Whale wallet tracker |
 | [stable-depeg-radar](https://github.com/witness1993x/stable-depeg-radar) | Python | Pairs + DEXTrades | Stablecoin depeg early-warning |
+
+## ChainStream References
+
+Use these as the source of truth when choosing cubes, writing GraphQL, or
+rewriting a fork/template workspace around ChainStream data:
+
+- Docs: https://docs.chainstream.io/
+- GraphQL overview: https://docs.chainstream.io/en/graphql/getting-started/overview
+- First query guide: https://docs.chainstream.io/en/graphql/getting-started/first-query
+- Access methods: https://docs.chainstream.io/en/docs/access-methods/overview
+- GraphQL IDE: https://ide.chainstream.io
+- LLM reference index: https://docs.chainstream.io/llms.txt
+- Endpoint: `https://graphql.chainstream.io/graphql`
 
 ## Schedule (twice-daily auto-scan)
 
@@ -141,6 +155,23 @@ Git-case actions in Lark, and OpenClaw forwards those actions to
 channel needs a card payload with buttons. The supported Lark action vocabulary
 is `git_case_dry_publish`, `git_case_fork_rewrite`,
 `git_case_write_stub`, `git_case_snooze`, and `git_case_drop`.
+
+Run the local bridge daemon when your OpenClaw Lark channel posts card
+callbacks through HTTP instead of invoking Python entryPoints directly:
+
+```bash
+AGENTFLOW_PIPELINE_LARK_BRIDGE_TOKEN="$(openssl rand -hex 16)"
+agentflow-lark-bridge --host 127.0.0.1 --port 7871
+
+# OpenClaw callback target:
+# http://127.0.0.1:7871/api/git-case-commands
+# Compatibility target, if the channel expects the blogflow-style path:
+# http://127.0.0.1:7871/api/commands
+```
+
+The bridge only accepts `git_case_*` commands and forwards them in-process to
+`agentflow_pipeline.lark_callback.handle_event`; it does not load article
+package `lark_gate_*` commands.
 
 ### Standalone webhook fallback
 
@@ -391,7 +422,7 @@ src/agentflow_pipeline/
 └── templates/                      # case scaffolding + post-publish templates
 ```
 
-483 pytest covering every module, zero network calls.
+494 pytest covering every module, zero network calls.
 
 ## License
 

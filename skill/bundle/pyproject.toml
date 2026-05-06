@@ -56,6 +56,7 @@ agentflow-trends = "agentflow_pipeline.trends_diff:main"
 agentflow-schedule = "agentflow_pipeline.schedule_installer:main"
 agentflow-tg-listen = "agentflow_pipeline.tg_callback_listener:_main_entry"
 agentflow-tg-notify = "agentflow_pipeline.tg_notifier:_main_entry"
+agentflow-lark-bridge = "agentflow_pipeline.lark_bridge:_main_entry"
 
 [project.urls]
 Homepage = "https://github.com/witness1993x/agentflow-pipeline"
