@@ -28,12 +28,15 @@ an existing file in the workspace.
 The optional Anthropic SDK is imported lazily; if it is not installed (or the
 ``ANTHROPIC_API_KEY`` env var is unset) :func:`handle_write_stub` falls back to
 a deterministic static skeleton so the action still produces a usable
-workspace without any network call.
+workspace without any network call. ``case:fork-rewrite`` is the heavier Git
+case action: it prepares the candidate workspace and writes ChainStream API
+client/probe scaffolding into it.
 """
 from __future__ import annotations
 
 import os
 import re
+import subprocess
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -109,6 +112,14 @@ def _case_id_from_dir(case_dir: Path) -> str:
     name = case_dir.name
     m = re.match(r"^(HSP-\d+)", name)
     return m.group(1) if m else ""
+
+
+def _run_command(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +446,275 @@ def handle_write_stub(case_dir: Path, *, actor: str, **kwargs: Any) -> Dict[str,
 
 
 # ---------------------------------------------------------------------------
-# Action 3: drop (mark case as abandoned)
+# Action 3: fork-rewrite (prepare workspace + ChainStream API integration)
+# ---------------------------------------------------------------------------
+
+def _first_candidate(config: Dict[str, Any]) -> Dict[str, Any]:
+    candidates = (
+        (config.get("gate_3_repo_routing") or {}).get("candidate_repos") or []
+    )
+    for item in candidates:
+        if isinstance(item, dict):
+            return item
+    return {}
+
+
+def _chainstream_probe_query(config: Dict[str, Any]) -> tuple[str, str]:
+    try:
+        from .chainstream_query_builder import select_probe_target, build_probe_query
+
+        chain_group, data_cube, _label = select_probe_target(config)
+        return (
+            build_probe_query(chain_group, data_cube, limit=1),
+            f"chainstream:{chain_group}.{data_cube}",
+        )
+    except Exception:
+        return (
+            "query PipelineDataProbe { __schema { queryType { name } } }\n",
+            "chainstream:__schema",
+        )
+
+
+def _chainstream_rewrite_files(config: Dict[str, Any]) -> Dict[str, str]:
+    meta = config.get("meta") or {}
+    gate2 = config.get("gate_2_project_shape") or {}
+    query, query_source = _chainstream_probe_query(config)
+    hotspot_name = str(meta.get("hotspot_name") or "Git hotspot project").replace('"', "'")
+    hotspot_id = str(meta.get("hotspot_id") or "")
+    project_shape = str(gate2.get("project_shape") or "data_project")
+    query_literal = repr(query)
+
+    client_ts = (
+        "export interface ChainStreamGraphQLResponse<T = unknown> {\n"
+        "  data?: T;\n"
+        "  errors?: Array<{ message?: string }>;\n"
+        "  extensions?: Record<string, unknown>;\n"
+        "}\n\n"
+        "export interface ChainStreamClientOptions {\n"
+        "  endpoint?: string;\n"
+        "  apiKey?: string;\n"
+        "}\n\n"
+        "const DEFAULT_ENDPOINT = 'https://graphql.chainstream.io/graphql';\n\n"
+        "export function chainStreamConfig(options: ChainStreamClientOptions = {}) {\n"
+        "  const endpoint = options.endpoint || process.env.CHAINSTREAM_ENDPOINT || DEFAULT_ENDPOINT;\n"
+        "  const apiKey = options.apiKey || process.env.CHAINSTREAM_API_KEY || '';\n"
+        "  if (!apiKey) {\n"
+        "    throw new Error('CHAINSTREAM_API_KEY is required');\n"
+        "  }\n"
+        "  return { endpoint, apiKey };\n"
+        "}\n\n"
+        "export async function runChainStreamQuery<T = unknown>(\n"
+        "  query: string,\n"
+        "  variables: Record<string, unknown> = {},\n"
+        "  options: ChainStreamClientOptions = {},\n"
+        "): Promise<ChainStreamGraphQLResponse<T>> {\n"
+        "  const { endpoint, apiKey } = chainStreamConfig(options);\n"
+        "  const response = await fetch(endpoint, {\n"
+        "    method: 'POST',\n"
+        "    headers: {\n"
+        "      'content-type': 'application/json',\n"
+        "      'x-api-key': apiKey,\n"
+        "    },\n"
+        "    body: JSON.stringify({ query, variables }),\n"
+        "  });\n"
+        "  if (!response.ok) {\n"
+        "    throw new Error(`ChainStream HTTP ${response.status}: ${await response.text()}`);\n"
+        "  }\n"
+        "  return (await response.json()) as ChainStreamGraphQLResponse<T>;\n"
+        "}\n"
+    )
+    probe_ts = (
+        "import { runChainStreamQuery } from './chainstream-client';\n\n"
+        f"export const HOTSPOT_ID = {hotspot_id!r};\n"
+        f"export const HOTSPOT_NAME = {hotspot_name!r};\n"
+        f"export const PROJECT_SHAPE = {project_shape!r};\n"
+        f"export const QUERY_SOURCE = {query_source!r};\n\n"
+        f"export const PROBE_QUERY = {query_literal};\n\n"
+        "export async function main() {\n"
+        "  const result = await runChainStreamQuery(PROBE_QUERY);\n"
+        "  const topKeys = Object.keys((result.data || {}) as Record<string, unknown>);\n"
+        "  console.log(JSON.stringify({ hotspot: HOTSPOT_ID, querySource: QUERY_SOURCE, topKeys }, null, 2));\n"
+        "}\n\n"
+        "if (import.meta.url === `file://${process.argv[1]}`) {\n"
+        "  main().catch((error) => {\n"
+        "    console.error(error);\n"
+        "    process.exitCode = 1;\n"
+        "  });\n"
+        "}\n"
+    )
+    package_json = (
+        "{\n"
+        f'  "name": "@agentflow/{_slug_from_hotspot(hotspot_id, hotspot_name)}",\n'
+        '  "version": "0.0.1",\n'
+        '  "private": true,\n'
+        f'  "description": "ChainStream rewrite for {hotspot_name}",\n'
+        '  "type": "module",\n'
+        '  "scripts": {\n'
+        '    "chainstream:probe": "tsx src/chainstream-probe.ts",\n'
+        '    "build": "tsc -p tsconfig.json",\n'
+        '    "test": "npm run build"\n'
+        '  },\n'
+        '  "devDependencies": {\n'
+        '    "tsx": "^4.0.0",\n'
+        '    "typescript": "^5.0.0"\n'
+        '  },\n'
+        '  "engines": { "node": ">=20" }\n'
+        "}\n"
+    )
+    tsconfig = (
+        "{\n"
+        '  "compilerOptions": {\n'
+        '    "target": "ES2022",\n'
+        '    "module": "NodeNext",\n'
+        '    "moduleResolution": "NodeNext",\n'
+        '    "strict": true,\n'
+        '    "skipLibCheck": true,\n'
+        '    "outDir": "dist"\n'
+        "  },\n"
+        '  "include": ["src/**/*.ts"]\n'
+        "}\n"
+    )
+    env_example = (
+        "# Required for the ChainStream-backed rewrite.\n"
+        "CHAINSTREAM_API_KEY=\n"
+        "CHAINSTREAM_ENDPOINT=https://graphql.chainstream.io/graphql\n"
+    )
+    runbook = (
+        "# ChainStream Rewrite Runbook\n\n"
+        f"- Hotspot: `{hotspot_id}` {hotspot_name}\n"
+        f"- Project shape: `{project_shape}`\n"
+        f"- Probe query source: `{query_source}`\n\n"
+        "## Local probe\n\n"
+        "```bash\n"
+        "cp .env.chainstream.example .env\n"
+        "# fill CHAINSTREAM_API_KEY\n"
+        "npm install\n"
+        "npm run chainstream:probe\n"
+        "```\n\n"
+        "## Notes\n\n"
+        "This rewrite adds a concrete ChainStream GraphQL client and a minimal\n"
+        "limit=1 probe. Keep API keys in env/GitHub Secrets only.\n"
+    )
+    return {
+        "src/chainstream-client.ts": client_ts,
+        "src/chainstream-probe.ts": probe_ts,
+        "package.json": package_json,
+        "tsconfig.json": tsconfig,
+        ".env.chainstream.example": env_example,
+        "CHAINSTREAM_REWRITE.md": runbook,
+        "chainstream/probe.graphql": query + "\n",
+    }
+
+
+def _slug_from_hotspot(hotspot_id: str, hotspot_name: str) -> str:
+    raw = f"{hotspot_id}-{hotspot_name}".lower()
+    value = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    return value or "chainstream-hotspot"
+
+
+def _copy_tree_into_workspace(files: Dict[str, str], workspace: Path) -> tuple[list[str], list[str]]:
+    written: list[str] = []
+    overwritten: list[str] = []
+    for relpath, content in files.items():
+        target = workspace / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            overwritten.append(relpath)
+        else:
+            written.append(relpath)
+        target.write_text(content, encoding="utf-8")
+    return written, overwritten
+
+
+def handle_fork_rewrite(case_dir: Path, *, actor: str, **kwargs: Any) -> Dict[str, Any]:
+    """Clone/reuse the candidate workspace and inject ChainStream API code."""
+    case_id = _case_id_from_dir(case_dir)
+    root = kwargs.get("root")
+    if not isinstance(root, Path):
+        root = case_dir.parent.parent
+    try:
+        gate_path, config = _load_gate_yaml(case_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        return {
+            "case_id": case_id,
+            "success": False,
+            "summary": _truncate(f"fork-rewrite read failed: {exc}"),
+            "follow_up": [],
+        }
+
+    slug = _slug_from_dir(case_dir)
+    workspace = Path(root) / "workspaces" / slug
+    candidate = _first_candidate(config)
+    candidate_url = str(candidate.get("url") or "")
+    cloned = False
+    if not workspace.exists() or not any(workspace.iterdir()):
+        workspace.parent.mkdir(parents=True, exist_ok=True)
+        if candidate_url:
+            clone = _run_command(["git", "clone", candidate_url, str(workspace)])
+            if clone.returncode != 0:
+                return {
+                    "case_id": case_id,
+                    "success": False,
+                    "summary": _truncate(clone.stderr.strip() or "git clone failed"),
+                    "follow_up": [],
+                }
+            cloned = True
+        else:
+            workspace.mkdir(parents=True, exist_ok=True)
+
+    files = _chainstream_rewrite_files(config)
+    written, overwritten = _copy_tree_into_workspace(files, workspace)
+    now = _iso_now()
+    execution = config.setdefault("execution_state", {})
+    rewrite_state = execution.setdefault("chainstream_rewrite", {})
+    rewrite_state.update({
+        "status": "rewritten",
+        "workspace": str(workspace),
+        "candidate_url": candidate_url,
+        "updated_at": now,
+        "actor": actor,
+        "written": written,
+        "overwritten": overwritten,
+    })
+    _append_review_log(config, {
+        "date": now,
+        "previous_status": str((config.get("decision") or {}).get("final_status") or ""),
+        "new_status": str((config.get("decision") or {}).get("final_status") or "probe"),
+        "what_changed": f"ChainStream rewrite applied by {actor}; workspace={workspace}",
+        "lessons": "Fork/template workspace now has ChainStream client, probe query, env example, and runbook.",
+    })
+    try:
+        _save_gate_yaml(gate_path, config)
+    except OSError as exc:
+        return {
+            "case_id": case_id,
+            "success": False,
+            "summary": _truncate(f"fork-rewrite state write failed: {exc}"),
+            "follow_up": [],
+        }
+    summary = (
+        f"{case_id} ChainStream rewrite ready in workspaces/{slug}"
+        + (" (cloned)" if cloned else "")
+    )
+    return {
+        "case_id": case_id,
+        "success": True,
+        "summary": _truncate(summary),
+        "follow_up": [
+            {"kind": "hint", "text": f"cd workspaces/{slug} && npm install && npm run chainstream:probe"},
+            {
+                "kind": "chainstream_rewrite",
+                "workspace": str(workspace),
+                "candidate_url": candidate_url,
+                "written": written,
+                "overwritten": overwritten,
+            },
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Action 4: drop (mark case as abandoned)
 # ---------------------------------------------------------------------------
 
 def handle_drop(case_dir: Path, *, actor: str, **kwargs: Any) -> Dict[str, Any]:
@@ -561,6 +840,7 @@ def handle_snooze(case_dir: Path, *, actor: str, days: str = "", **kwargs: Any) 
 _HANDLERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "dry-publish": handle_dry_publish,
     "write-stub": handle_write_stub,
+    "fork-rewrite": handle_fork_rewrite,
     "drop": handle_drop,
     "snooze": handle_snooze,
 }
@@ -593,6 +873,7 @@ def dispatch_callback_action(
 
         case:dry-publish:HSP-005
         case:write-stub:HSP-005
+        case:fork-rewrite:HSP-005
         case:drop:HSP-005
         case:snooze:HSP-005:7d
     """
@@ -703,6 +984,7 @@ __all__ = [
     "dispatch_callback_action",
     "handle_dry_publish",
     "handle_write_stub",
+    "handle_fork_rewrite",
     "handle_drop",
     "handle_snooze",
 ]

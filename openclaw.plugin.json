@@ -1,8 +1,8 @@
 {
   "id": "agentflow-pipeline",
   "name": "AgentFlow Pipeline",
-  "version": "0.4.6",
-  "description": "Git hotspot search and Git/GitHub repo delivery framework. Use for Git 热点搜索 with source/project links, Git case Lark/TG callbacks, and scaffold/probe/publish/monitor lifecycle; use the separate article-hotspot package for blog/content workflows.",
+  "version": "0.4.7",
+  "description": "Git hotspot search and Git/GitHub repo delivery framework. Use for Git 热点搜索 with source/project links, OpenClaw Lark App buttons, ChainStream fork-rewrite, Git case Lark/TG callbacks, and scaffold/probe/publish/monitor lifecycle; use the separate article-hotspot package for blog/content workflows.",
   "channels": [],
   "skills": ["./skill"],
   "configSchema": {
@@ -53,6 +53,7 @@
     "schedule": { "command": "agentflow-schedule", "description": "Generate launchd plist / systemd timer" },
     "trends":   { "command": "agentflow-trends",   "description": "Diff scan history" },
     "init":     { "command": "agentflow-init",     "description": "Bootstrap a host project" },
-    "lark_callback": { "handler": "agentflow_pipeline.lark_callback:handle_event", "description": "Handle OpenClaw-forwarded Git case Lark actions with git_case_* vocabulary" }
+    "lark_scan_card": { "handler": "agentflow_pipeline.lark_callback:build_scan_interactive_card", "description": "Render OpenClaw Lark App interactive Git hotspot cards with git_case_* action buttons" },
+    "lark_callback": { "handler": "agentflow_pipeline.lark_callback:handle_event", "description": "Handle OpenClaw-forwarded Git case Lark actions with git_case_* vocabulary, including ChainStream fork-rewrite" }
   }
 }

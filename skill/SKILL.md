@@ -6,7 +6,7 @@ description: Git hotspot search and Git/GitHub repo delivery framework for turni
 # AgentFlow Pipeline
 
 This skill packages the `agentflow-pipeline` Python framework — a fully tested
-(483 pytest) end-to-end machine for going from a selected project idea to a
+(489 pytest) end-to-end machine for going from a selected project idea to a
 public GitHub repository with source code, publish gates, CI scaffolding, and
 post-publish operations. Its scan/trends commands are **Git 热点搜索 / Git
 hotspot search** inputs for repo selection, not a general blog/article
@@ -56,11 +56,12 @@ receive-only; it cannot guarantee Lark-side operation callbacks.
 Interaction vocabulary is Git-case specific:
 
 - Telegram buttons use `case:*` callback data, for example
-  `case:dry-publish:HSP-005`, `case:write-stub:HSP-005`,
-  `case:snooze:HSP-005:7d`, and `case:drop:HSP-005`.
+  `case:dry-publish:HSP-005`, `case:fork-rewrite:HSP-005`,
+  `case:write-stub:HSP-005`, `case:snooze:HSP-005:7d`, and
+  `case:drop:HSP-005`.
 - OpenClaw-forwarded Lark actions use `git_case_*` names:
-  `git_case_dry_publish`, `git_case_write_stub`, `git_case_snooze`,
-  and `git_case_drop`.
+  `git_case_dry_publish`, `git_case_fork_rewrite`,
+  `git_case_write_stub`, `git_case_snooze`, and `git_case_drop`.
 - Do not reuse the article package's `A:*` / `B:*` / `C:*` / `D:*`
   Telegram callbacks or `lark_gate_*` Lark tool names here.
 
@@ -125,6 +126,13 @@ agentflow-pipeline --case-dir cases/HSP-001-… --auto-publish-dry-run
 agentflow-pipeline --case-dir cases/HSP-001-… \
   --auto-publish --auto-publish-confirm --reuse-existing-workspace
 ```
+
+In Lark App / Telegram callback mode, prefer `fork+rewrite` before publish for
+repo candidates that should be rebuilt around ChainStream data. It writes
+`src/chainstream-client.ts`, `src/chainstream-probe.ts`,
+`.env.chainstream.example`, `chainstream/probe.graphql`, and
+`CHAINSTREAM_REWRITE.md` into `workspaces/<case>/`, then records
+`execution_state.chainstream_rewrite` in the case YAML.
 
 ### D. "Install twice-daily auto-scan"
 

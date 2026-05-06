@@ -1,7 +1,7 @@
 # Handoff for Cursor — agentflow-pipeline
 
 **Last updated**: 2026-05-06 by Cursor
-**State**: v0.4.6 patch in progress; Git 热点搜索 reports now include direct hotspot project/source links. Lark-only operation is supported only through OpenClaw Lark App mode (`@larksuite/openclaw-lark` forwarding `git_case_*` actions), while standalone Lark Custom Bot remains receive-only.
+**State**: v0.4.7 patch in progress; OpenClaw Lark App mode now has a real interactive Git 热点搜索 card builder with `git_case_*` buttons, including `git_case_fork_rewrite`. `case:fork-rewrite` prepares the candidate workspace and injects ChainStream API client/probe/runbook files. Standalone Lark Custom Bot remains receive-only.
 
 ---
 
@@ -12,10 +12,10 @@ The framework is now a **fully functional Claude Code / OpenClaw skill** that:
 1. **Scans** crypto/AI hotspots from GitHub + HackerNews + Reddit on a daily 10:00 launchd timer
 2. **Auto-promotes** newly-discovered high-engagement entries into case scaffolds (level-B half-automation, no code generation, no publish)
 3. **Notifies** results via standalone Lark webhook / Telegram fallback, or via OpenClaw's official Lark App channel when `@larksuite/openclaw-lark` is installed
-4. **Receives interactive callbacks** from Telegram (long-poll daemon) — clicking inline buttons triggers framework actions: `dry-publish`, `write-stub`, `drop`, `snooze`
+4. **Receives interactive callbacks** from Telegram (long-poll daemon) and OpenClaw Lark App cards — clicking buttons triggers framework actions: `dry-publish`, `fork-rewrite`, `write-stub`, `drop`, `snooze`
 5. **Ships as a single skill zip** that OpenClaw can list as an AgentFlow skill/plugin alongside the official Lark channel plugin
 
-What remains: commit/push/release the v0.4.6 patch only if requested.
+What remains: finish v0.4.7 test/package/commit/push after verification.
 
 ---
 
@@ -24,7 +24,7 @@ What remains: commit/push/release the v0.4.6 patch only if requested.
 **Repo**: https://github.com/witness1993x/agentflow-pipeline
 **Local path**: `/Users/witness/Desktop/experimental/agentflow-git-repo-clone`
 **Last published release**: v0.4.2 (OpenClaw Lark App alignment via official `@larksuite/openclaw-lark`)
-**Pending release**: v0.4.6 (Git hotspot project links + Lark-only boundary clarification)
+**Pending release**: v0.4.7 (Lark App buttons + ChainStream fork-rewrite)
 
 ### Test count history
 
@@ -39,7 +39,8 @@ What remains: commit/push/release the v0.4.6 patch only if requested.
 | v0.4.3 | 480 | Git/GitHub repo delivery trigger cleanup; avoids article-hotspot package overlap |
 | v0.4.4 | 480 | Standardizes this package's terminology as Git 热点搜索 / Git hotspot search |
 | v0.4.5 | 483 | Adds Git-case TG callback buttons and OpenClaw-forwarded Lark callback handler |
-| **v0.4.6** | **483** | Adds direct hotspot project/source links and documents Lark-only mode requirements |
+| v0.4.6 | 483 | Adds direct hotspot project/source links and documents Lark-only mode requirements |
+| **v0.4.7** | **489** | Adds OpenClaw Lark App interactive cards and ChainStream `fork-rewrite` action |
 
 ### Current working-tree changes (uncommitted)
 

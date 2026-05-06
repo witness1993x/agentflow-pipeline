@@ -21,6 +21,7 @@ from agentflow_pipeline.case_actions import (
     dispatch_callback_action,
     handle_drop,
     handle_dry_publish,
+    handle_fork_rewrite,
     handle_snooze,
     handle_write_stub,
 )
@@ -129,6 +130,16 @@ def test_dispatch_snooze_parses_7d_extra(root_with_ready_case: Path) -> None:
     assert "snoozed for 7 days" in result["summary"]
 
 
+def test_dispatch_fork_rewrite_routes_to_handler(root_with_ready_case: Path) -> None:
+    result = dispatch_callback_action(
+        "case:fork-rewrite:HSP-005",
+        root=root_with_ready_case,
+    )
+    assert result["action"] == "case:fork-rewrite"
+    assert result["success"] is True
+    assert "ChainStream rewrite ready" in result["summary"]
+
+
 def test_dispatch_unknown_verb_fails(root_with_ready_case: Path) -> None:
     result = dispatch_callback_action(
         "case:teleport:HSP-005",
@@ -209,6 +220,41 @@ def test_handle_dry_publish_blocked_lists_first_three_blockers(
     assert blockers_entry is not None
     assert blockers_entry["count"] >= 3
     assert len(blockers_entry["items"]) == blockers_entry["count"]
+
+
+# ---------------------------------------------------------------------------
+# handle_fork_rewrite
+# ---------------------------------------------------------------------------
+
+def test_handle_fork_rewrite_creates_chainstream_workspace(
+    root_with_ready_case: Path,
+) -> None:
+    case_dir = root_with_ready_case / "cases" / "HSP-005-demo-hotspot"
+    result = handle_fork_rewrite(case_dir, actor="lark:ou_1", root=root_with_ready_case)
+
+    assert result["success"] is True
+    workspace = root_with_ready_case / "workspaces" / "HSP-005-demo-hotspot"
+    assert (workspace / "src" / "chainstream-client.ts").is_file()
+    assert (workspace / "src" / "chainstream-probe.ts").is_file()
+    assert (workspace / ".env.chainstream.example").is_file()
+    assert (workspace / "CHAINSTREAM_REWRITE.md").is_file()
+    assert "CHAINSTREAM_API_KEY" in (
+        workspace / ".env.chainstream.example"
+    ).read_text(encoding="utf-8")
+    assert any(
+        fu.get("kind") == "chainstream_rewrite" for fu in result["follow_up"]
+    )
+
+
+def test_handle_fork_rewrite_records_gate_state(root_with_ready_case: Path) -> None:
+    case_dir = root_with_ready_case / "cases" / "HSP-005-demo-hotspot"
+    handle_fork_rewrite(case_dir, actor="lark:ou_1", root=root_with_ready_case)
+
+    cfg = yaml.safe_load((case_dir / "02-pipeline-gate.yaml").read_text())
+    state = cfg["execution_state"]["chainstream_rewrite"]
+    assert state["status"] == "rewritten"
+    assert state["actor"] == "lark:ou_1"
+    assert "ChainStream rewrite applied" in cfg["review_log"][-1]["what_changed"]
 
 
 # ---------------------------------------------------------------------------

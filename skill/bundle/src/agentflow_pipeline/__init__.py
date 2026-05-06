@@ -21,6 +21,7 @@ from .case_actions import (
     dispatch_callback_action,
     handle_drop,
     handle_dry_publish,
+    handle_fork_rewrite,
     handle_snooze,
     handle_write_stub,
 )
@@ -51,7 +52,10 @@ from .lark_notifier import (
     send_card,
     send_text,
 )
-from .lark_callback import handle_event as handle_lark_event
+from .lark_callback import (
+    build_scan_interactive_card,
+    handle_event as handle_lark_event,
+)
 from .notification_templates import (
     DEFAULT_LARK_SCAN_CARD_TPL,
     DEFAULT_TG_SCAN_CARD_TPL,
@@ -141,6 +145,7 @@ __all__ = [
     "send_card",
     "send_text",
     "handle_lark_event",
+    "build_scan_interactive_card",
     # notification_templates
     "DEFAULT_LARK_SCAN_CARD_TPL",
     "DEFAULT_TG_SCAN_CARD_TPL",
@@ -191,6 +196,7 @@ __all__ = [
     # case_actions
     "dispatch_callback_action",
     "handle_dry_publish",
+    "handle_fork_rewrite",
     "handle_write_stub",
     "handle_drop",
     "handle_snooze",

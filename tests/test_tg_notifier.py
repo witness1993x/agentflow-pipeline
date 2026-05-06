@@ -492,6 +492,7 @@ def test_notify_scan_complete_full_path(
     assert any("Git case" in l for l in labels)
     assert any("scan.md" in l for l in labels)
     assert any(b.get("callback_data") == "case:dry-publish:HSP-005" for b in flat)
+    assert any(b.get("callback_data") == "case:fork-rewrite:HSP-005" for b in flat)
     assert any(b.get("callback_data") == "case:write-stub:HSP-005" for b in flat)
     assert any(b.get("callback_data") == "case:snooze:HSP-005:7d" for b in flat)
     assert all(

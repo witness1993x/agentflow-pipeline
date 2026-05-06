@@ -58,7 +58,7 @@ _TG_MAX_MESSAGE_CHARS = 4096
 _TG_CHUNK_SAFE_CHARS = 4000  # leave headroom for parse-mode glitches
 _TG_CALLBACK_DATA_MAX_BYTES = 64
 _TG_MAX_BUTTONS_PER_ROW = 3
-_TG_MAX_BUTTONS_TOTAL = 8  # mirrors Lark cap-of-5 spirit but a touch looser
+_TG_MAX_BUTTONS_TOTAL = 10  # room for source links plus all Git case actions
 _TG_BUTTON_OVERFLOW_NOTE_BYTES = 12
 
 # Single-process serialization so back-to-back fan-outs don't blow the
@@ -606,6 +606,7 @@ def _build_callback_actions_for_tg(
         return []
     return [
         ("✅ 8 gates", f"case:dry-publish:{hotspot_id}"),
+        ("🔁 fork+rewrite", f"case:fork-rewrite:{hotspot_id}"),
         ("🧱 write stub", f"case:write-stub:{hotspot_id}"),
         ("😴 snooze 7d", f"case:snooze:{hotspot_id}:7d"),
         ("🗑 drop", f"case:drop:{hotspot_id}"),

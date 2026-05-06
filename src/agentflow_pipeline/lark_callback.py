@@ -13,12 +13,18 @@ from pathlib import Path
 from typing import Any
 
 from .case_actions import dispatch_callback_action
+from .notification_templates import (
+    DEFAULT_LARK_SCAN_CARD_TPL,
+    render_scan_card,
+    resolve_template,
+)
 
 _log = logging.getLogger("agentflow.lark_callback")
 
 _ACTION_TO_CASE_VERB = {
     "git_case_dry_publish": "dry-publish",
     "git_case_write_stub": "write-stub",
+    "git_case_fork_rewrite": "fork-rewrite",
     "git_case_drop": "drop",
     "git_case_snooze": "snooze",
 }
@@ -44,6 +50,85 @@ def _make_card(*, title: str, body: str, template: str = "blue") -> dict[str, An
         "elements": [
             {"tag": "div", "text": {"content": body, "tag": "lark_md"}},
         ],
+    }
+
+
+def _case_id_from_promoted_case(case: dict[str, Any]) -> str:
+    raw = str(case.get("hotspot_id") or case.get("case_id") or "")
+    if raw.startswith("HSP-"):
+        return raw
+    case_dir = str(case.get("case_dir") or "")
+    name = Path(case_dir).name
+    if "-" in name and name.startswith("HSP-"):
+        return "-".join(name.split("-")[:2])
+    return raw
+
+
+def _button(label: str, action: str, case_id: str, *, button_type: str = "default") -> dict[str, Any]:
+    return {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": label},
+        "type": button_type,
+        "value": {
+            "action": action,
+            "case_id": case_id,
+        },
+    }
+
+
+def build_scan_interactive_card(
+    *,
+    scan_result: dict[str, Any],
+    shipped_repos: list[dict[str, Any]] | None = None,
+    auto_promoted_cases: list[dict[str, Any]] | None = None,
+    top_n: int = 5,
+    brand_prefix: str = "",
+    host_root: Path | str | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Render a Lark App interactive card with Git case action buttons.
+
+    This is for OpenClaw/Lark App mode. Standalone Lark Custom Bot webhooks
+    should keep using ``lark_notifier`` because they cannot receive callbacks.
+    """
+    host_path = Path(str(host_root)).expanduser() if host_root is not None else None
+    template = resolve_template(name="lark_scan_card", host_root=host_path)
+    title, body = render_scan_card(
+        template=template or DEFAULT_LARK_SCAN_CARD_TPL,
+        scan_result=scan_result,
+        shipped_repos=shipped_repos or [],
+        auto_promoted_cases=auto_promoted_cases or [],
+        top_n=top_n,
+        brand_prefix=brand_prefix,
+    )
+    elements: list[dict[str, Any]] = [
+        {"tag": "div", "text": {"content": body, "tag": "lark_md"}},
+    ]
+    safe_root = str(Path(str(root)).expanduser()) if root is not None else ""
+    for case in [c for c in (auto_promoted_cases or []) if isinstance(c, dict)]:
+        case_id = _case_id_from_promoted_case(case)
+        if not case_id:
+            continue
+        actions = [
+            _button("✅ 8 gates", "git_case_dry_publish", case_id, button_type="primary"),
+            _button("🔁 fork+rewrite", "git_case_fork_rewrite", case_id, button_type="primary"),
+            _button("😴 snooze 7d", "git_case_snooze", case_id),
+            _button("🗑 drop", "git_case_drop", case_id, button_type="danger"),
+        ]
+        if safe_root:
+            for action in actions:
+                action["value"]["root"] = safe_root
+        elements.append({
+            "tag": "action",
+            "actions": actions,
+        })
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"content": title, "tag": "plain_text"},
+            "template": "blue",
+        },
+        "elements": elements,
     }
 
 
@@ -135,4 +220,4 @@ def handle_event(
     return response
 
 
-__all__ = ["handle_event"]
+__all__ = ["build_scan_interactive_card", "handle_event"]

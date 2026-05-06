@@ -2,7 +2,7 @@
 
 **Git 热点搜索 and Git/GitHub repo delivery framework for turning selected developer/data-source signals into shipped GitHub repositories backed by [ChainStream](https://chainstream.io) or pluggable on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-483%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.6-blue)]()
+[![tests](https://img.shields.io/badge/tests-489%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.7-blue)]()
 
 > Why this exists: this package owns **Git 热点搜索**: finding developer/repo signals that are worth turning into a GitHub project, then carrying that project through build/test/probe/publish/monitoring. That path usually involves 30+ disconnected manual steps — GitHub/HN/Reddit signal search, repo planning, scaffold, source workspace setup, build command inference, npm/pip install, tests, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 8 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer. It is intentionally different from the separate AgentFlow blog/article hotspot package, which owns article/content hotspots.
 >
@@ -71,7 +71,7 @@ bash scripts/install_schedule.sh --apply
 - **Trends diff**: `agentflow-trends diff` finds new / rising entries across scan history, optionally `promote --apply` straight into a new case
 - **Post-publish scaffolding**: CI workflow + ISSUE/PR templates + CODEOWNERS + RUNBOOK + MONITORING + README badges all rendered into the freshly created repo
 - **Real monitoring hooks** (opt-in): `gh secret set` + branch protection + dependabot + Grafana dashboard + PagerDuty service; all default to dry-run; `integration_key` redacted in logs / state
-- **483 pytest, 0 flaky, all offline** (no network calls in tests)
+- **489 pytest, 0 flaky, all offline** (no network calls in tests)
 
 ## Real shipped reference repos
 
@@ -134,11 +134,13 @@ to provide a Feishu channel; OpenClaw routes Lark messages/cards through
 state the agent operates on.
 
 With this mode enabled, the workflow can stay entirely inside Lark: the Git
-热点搜索 card is received in Lark, the operator clicks Git-case actions in
-Lark, and OpenClaw forwards those actions to
-`agentflow_pipeline.lark_callback.handle_event`. The supported Lark action
-vocabulary is `git_case_dry_publish`, `git_case_write_stub`,
-`git_case_snooze`, and `git_case_drop`.
+热点搜索 card is received in Lark as an interactive card, the operator clicks
+Git-case actions in Lark, and OpenClaw forwards those actions to
+`agentflow_pipeline.lark_callback.handle_event`. Use
+`agentflow_pipeline.lark_callback.build_scan_interactive_card` when the Lark
+channel needs a card payload with buttons. The supported Lark action vocabulary
+is `git_case_dry_publish`, `git_case_fork_rewrite`,
+`git_case_write_stub`, `git_case_snooze`, and `git_case_drop`.
 
 ### Standalone webhook fallback
 
@@ -172,21 +174,25 @@ that invoke framework actions **without leaving the chat**:
 
 - **`✅ 8 gates`** — runs the 8-gate `check_auto_publish_safety`
   for that case; replies with pass/fail + blocker list
+- **`🔁 fork+rewrite`** — prepares the candidate workspace, then writes a
+  ChainStream GraphQL client, probe query, `.env.chainstream.example`, and
+  runbook into the repo/workspace
 - **`🧱 write stub`** — generates a minimal TypeScript skeleton (uses
   Claude Haiku via `ANTHROPIC_API_KEY` if set; static fallback otherwise)
 - **`😴 snooze 7d`** — pushes `next_review_date` forward 7 days
 - **`🗑 drop`** — marks the case `final_status=drop` + appends review log
 
 The callback namespace is `case:*` (`case:dry-publish:HSP-005`,
-`case:write-stub:HSP-005`, `case:snooze:HSP-005:7d`, `case:drop:HSP-005`).
+`case:fork-rewrite:HSP-005`, `case:write-stub:HSP-005`,
+`case:snooze:HSP-005:7d`, `case:drop:HSP-005`).
 This deliberately does not reuse the article package's Gate vocabulary
 (`A:*`, `B:*`, `C:*`, `D:*`) or its `lark_gate_*` tool names.
 
 In OpenClaw Lark App mode, the official `openclaw-lark` channel owns the Lark
 gateway and permission policy. It can forward card actions into
 `agentflow_pipeline.lark_callback.handle_event` using the Git-specific action
-names `git_case_dry_publish`, `git_case_write_stub`, `git_case_snooze`, and
-`git_case_drop`.
+names `git_case_dry_publish`, `git_case_fork_rewrite`,
+`git_case_write_stub`, `git_case_snooze`, and `git_case_drop`.
 
 ### Setup (one-time)
 
