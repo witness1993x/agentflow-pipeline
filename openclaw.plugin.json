@@ -1,0 +1,68 @@
+{
+  "id": "agentflow-pipeline",
+  "name": "AgentFlow Pipeline",
+  "version": "0.3.0",
+  "description": "Hotspot → GitHub → ChainStream pipeline framework with Lark/TG notifications and auto-promote.",
+  "channels": ["feishu", "telegram"],
+  "skills": ["./skill"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "host_root": {
+        "type": "string",
+        "description": "Path to the host project root (cases/, workspaces/, trends/)"
+      },
+      "auto_promote": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable level-B auto-promote in scheduled scans"
+      },
+      "auto_promote_min_engagement": {
+        "type": "integer",
+        "default": 150
+      },
+      "scan_times_local": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["10:00"]
+      },
+      "scan_sources": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["github", "hackernews"]
+      }
+    }
+  },
+  "channelConfigs": {
+    "feishu": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "webhook_url_env": { "type": "string", "default": "LARK_WEBHOOK_URL" },
+          "secret_env": { "type": "string", "default": "LARK_WEBHOOK_SECRET" },
+          "keywords_env": { "type": "string", "default": "LARK_WEBHOOK_KEYWORDS" },
+          "brand_prefix_env": { "type": "string", "default": "LARK_WEBHOOK_BRAND_PREFIX" }
+        }
+      }
+    },
+    "telegram": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "bot_token_env": { "type": "string", "default": "TELEGRAM_BOT_TOKEN" },
+          "chat_id_env": { "type": "string", "default": "TELEGRAM_CHAT_ID" },
+          "callback_secret_env": { "type": "string", "default": "TELEGRAM_CALLBACK_SECRET" }
+        }
+      }
+    }
+  },
+  "entryPoints": {
+    "scan":     { "command": "agentflow-scan",     "description": "One-shot multi-source hotspot scan" },
+    "scaffold": { "command": "agentflow-scaffold", "description": "Generate a new case skeleton" },
+    "pipeline": { "command": "agentflow-pipeline", "description": "Main runner" },
+    "schedule": { "command": "agentflow-schedule", "description": "Generate launchd plist / systemd timer" },
+    "trends":   { "command": "agentflow-trends",   "description": "Diff scan history" },
+    "init":     { "command": "agentflow-init",     "description": "Bootstrap a host project" }
+  }
+}

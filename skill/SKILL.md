@@ -23,6 +23,23 @@ Invoke this skill when the user asks any of:
   DataSource plugin, Pump.fun-like memecoin radar, EVM whale tracking,
   stablecoin depeg monitor — these are first-class examples already shipped.
 
+## OpenClaw plugin compatibility
+
+This skill ships a sibling `openclaw.plugin.json` manifest so OpenClaw
+runtimes can list it as a plugin alongside `openclaw-lark` etc. The
+plugin declares two channels:
+
+- `feishu` — Lark group cards via `LARK_WEBHOOK_URL` env
+- `telegram` — TG bot push + (optional) callback daemon
+
+When run **inside an OpenClaw runtime**, prefer routing notifications
+through the host's existing channel transport (e.g. let `openclaw-lark`
+post to the user's Lark workspace). When run **standalone**, the
+framework's bundled `lark_notifier` / `tg_notifier` modules POST to the
+respective bot APIs directly. Either mode reads the same env vars.
+
+See `openclaw.plugin.json` for the configSchema this plugin accepts.
+
 ## Install
 
 The skill bundle ships the Python source in `bundle/`. To install:

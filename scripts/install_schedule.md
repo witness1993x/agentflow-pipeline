@@ -433,3 +433,222 @@ Edit the plist's `--scan-args` to drop `--auto-promote-apply` (keep
 `--auto-promote` for dry-run reporting only), or remove both flags
 entirely. Then re-run the same `agentflow-schedule install ...
 --apply --force` command above to push the change.
+
+## TG callback daemon (interactive)
+
+`agentflow-tg-listen` is the long-running counterpart to
+`agentflow-tg-notify`: where the latter pushes a single card and
+exits, the listener stays connected to Telegram's `getUpdates` long-
+poll and dispatches inline-keyboard button clicks
+(`📊 dry-publish` / `🤖 write-stub` / `🚮 drop` / `💤 snooze 7d`) to
+the framework's `case_actions` handlers. Because it's a daemon, the
+schedule installer needs a different unit shape than the cron-style
+twice-daily scan.
+
+### What the installer generates
+
+`agentflow-schedule install --mode daemon` writes a unit that
+**runs continuously**, not on a calendar:
+
+- **macOS launchd plist** — no `StartCalendarInterval`. Instead:
+  - `RunAtLoad=true` — start the daemon as soon as the LaunchAgent
+    is bootstrapped (and on every user login afterwards).
+  - `KeepAlive` is a *dict*, not a bool:
+    ```xml
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>     <!-- exit 0 → don't restart (lets the operator
+                          stop the daemon gracefully) -->
+        <key>Crashed</key>
+        <true/>      <!-- non-zero exit / signal → restart -->
+        <key>NetworkState</key>
+        <true/>      <!-- only run when network is up -->
+    </dict>
+    ```
+  - `ThrottleInterval=10` (seconds) — prevents rapid-restart loops if
+    the daemon dies immediately on launch (e.g. missing token).
+- **linux systemd service** — no `.timer` companion. The `.service`
+  file is `Type=simple` with `Restart=on-failure` and
+  `RestartSec=10`. `systemctl --user enable --now <label>.service`
+  starts it now and on every user-session boot.
+
+### Quick install (macOS)
+
+```bash
+# Activate the venv that has agentflow-tg-listen installed
+source /tmp/agentflow-venv/bin/activate
+
+# Make sure the bot creds are reachable to the launchd context
+launchctl setenv TELEGRAM_BOT_TOKEN "$TELEGRAM_BOT_TOKEN"
+launchctl setenv TELEGRAM_CALLBACK_SECRET "$TELEGRAM_CALLBACK_SECRET"
+
+# Dry-run the installer first (default)
+bash scripts/install_tg_listener.sh
+
+# Then apply
+bash scripts/install_tg_listener.sh --apply
+```
+
+Expected dry-run output (truncated):
+
+```
+[install_tg_listener] platform : macos
+[install_tg_listener] root     : /path/to/host-project
+[install_tg_listener] label    : com.agentflow.tg-listener
+[install_tg_listener] mode     : install
+[install_tg_listener] apply    : no (dry-run)
+[install_tg_listener] listen bin : /tmp/agentflow-venv/bin/agentflow-tg-listen
+[install_tg_listener] command  : agentflow-schedule install --mode daemon \
+        --platform macos --label com.agentflow.tg-listener \
+        --root /path/to/host-project \
+        --daemon-args "--bot-token-env TELEGRAM_BOT_TOKEN \
+                       --callback-secret-env TELEGRAM_CALLBACK_SECRET"
+----------------------------------------------------------------------
+[agentflow-schedule] platform = macos
+[agentflow-schedule] label    = com.agentflow.tg-listener
+[agentflow-schedule] status   = dry_run
+[agentflow-schedule] plist    = ~/Library/LaunchAgents/com.agentflow.tg-listener.plist
+
+----- plist -----
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC ...>
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.agentflow.tg-listener</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/tmp/agentflow-venv/bin/agentflow-tg-listen</string>
+        <string>--root</string><string>/path/to/host-project</string>
+        <string>--bot-token-env</string><string>TELEGRAM_BOT_TOKEN</string>
+        <string>--callback-secret-env</string><string>TELEGRAM_CALLBACK_SECRET</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key><false/>
+        <key>Crashed</key><true/>
+        <key>NetworkState</key><true/>
+    </dict>
+    <key>ThrottleInterval</key><integer>10</integer>
+</dict>
+</plist>
+
+----- actions -----
+  - would mkdir -p /path/to/host-project/trends/_logs
+  - would write plist to ~/Library/LaunchAgents/com.agentflow.tg-listener.plist
+  - would run: launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.agentflow.tg-listener.plist
+```
+
+### Verify
+
+```bash
+# Is the daemon loaded?
+launchctl list | grep tg-listener
+
+# Same thing via the framework CLI:
+agentflow-schedule status --label com.agentflow.tg-listener
+
+# Tail the run logs (the daemon writes here on every callback):
+tail -f /path/to/host-project/trends/_logs/com.agentflow.tg-listener.err.log
+
+# Force a restart:
+launchctl kickstart -k gui/$(id -u)/com.agentflow.tg-listener
+```
+
+### env gotcha (same as cron mode)
+
+`launchd` does **not** inherit your shell's env. Without `launchctl
+setenv`, the daemon will start, fail to read `TELEGRAM_BOT_TOKEN`,
+exit non-zero, get throttle-restarted every 10 seconds, and burn CPU
+while writing nothing to the chat. Belt-and-suspenders:
+
+```bash
+# Set in launchd's user-session env (lasts until reboot):
+launchctl setenv TELEGRAM_BOT_TOKEN "$TELEGRAM_BOT_TOKEN"
+launchctl setenv TELEGRAM_CALLBACK_SECRET "$TELEGRAM_CALLBACK_SECRET"
+
+# To make this survive reboot, add the same launchctl setenv lines to
+# ~/.zprofile (zsh) or ~/.bash_profile (bash), or wrap the daemon
+# binary in a shell that sources .env first.
+```
+
+After the first crash + restart, the auto-restart loop will also
+pick up newly-set env vars (it doesn't cache them).
+
+### Restrict the daemon to specific chats
+
+```bash
+bash scripts/install_tg_listener.sh \
+  --chat-id-allowlist "12345678,87654321" \
+  --apply
+```
+
+Without an allowlist the daemon will respond to inline buttons from
+any chat the bot has been invited to. The allowlist plus the
+`TELEGRAM_CALLBACK_SECRET` prefix on every `callback_data` form
+defence-in-depth: an attacker would need both to spoof a click.
+
+### Uninstall
+
+```bash
+bash scripts/install_tg_listener.sh --uninstall              # dry-run
+bash scripts/install_tg_listener.sh --uninstall --apply      # for real
+```
+
+This runs `launchctl bootout gui/<uid>
+~/Library/LaunchAgents/com.agentflow.tg-listener.plist` and unlinks
+the plist (macOS), or `systemctl --user disable --now
+com.agentflow.tg-listener.service` and unlinks the service file
+(linux). Any in-flight callback is dropped; subsequent button clicks
+go unanswered until the daemon is reinstalled.
+
+### All flags
+
+```
+bash scripts/install_tg_listener.sh [options]
+
+  --root PATH                       host project root (default: cwd)
+  --label NAME                      launchd label / systemd unit basename
+                                    (default: com.agentflow.tg-listener)
+  --bot-token-env NAME              env var that holds the bot token
+                                    (default: TELEGRAM_BOT_TOKEN)
+  --callback-secret-env NAME        env var that holds the callback secret
+                                    (default: TELEGRAM_CALLBACK_SECRET)
+  --chat-id-allowlist "id1,id2"     comma-separated chat_id whitelist
+  --apply                           actually install (default is dry-run)
+  --status                          show current daemon status
+  --uninstall                       uninstall mode
+  -h, --help                        show this help
+```
+
+### Lark → TG deep link bridge (design)
+
+Lark Custom Bot is push-only — its inline buttons cannot trigger
+callbacks back to the framework. To preserve interactivity end-to-
+end while keeping Lark as the primary "look at this" channel, the
+framework rewrites the same set of buttons into Telegram **deep
+links** when posting to Lark:
+
+```
+[📊 dry-publish] → https://t.me/<bot_username>?start=publish-HSP-042-...-<sig>
+```
+
+The deep link opens the user's Telegram client, focuses the bot
+chat, and sends `/start <payload>` automatically. The
+`agentflow-tg-listen` daemon recognises `/start` payloads with the
+`TELEGRAM_CALLBACK_SECRET` prefix and dispatches them to the same
+`case_actions` handlers used for in-chat inline-button clicks.
+
+This means a single click in Lark performs the same action as a
+click in TG — the daemon just becomes the universal action router.
+Configure with `--lark-cta-tg-bot @your_bot_username` on the daily
+scan, e.g.:
+
+```bash
+bash scripts/install_schedule.sh \
+  --times "10:00" \
+  --scan-args "--notify-lark --lark-cta-tg-bot @your_bot_username" \
+  --label com.agentflow.scan.daily-10am \
+  --apply
+```

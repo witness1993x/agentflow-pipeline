@@ -2,7 +2,7 @@
 
 **End-to-end pipeline framework for turning crypto/AI hotspots into shipped GitHub repos backed by [ChainStream](https://chainstream.io) (or pluggable) on-chain data.**
 
-[![tests](https://img.shields.io/badge/tests-386%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.3.0-blue)]()
+[![tests](https://img.shields.io/badge/tests-471%20passing-brightgreen)]() [![python](https://img.shields.io/badge/python-3.11%2B-blue)]() [![license](https://img.shields.io/badge/license-MIT-lightgrey)]() [![version](https://img.shields.io/badge/version-0.4.0-blue)]()
 
 > Why this exists: the path from "I noticed Pump.fun radars are trending" to "a public GitHub repo doing something useful with that signal" usually involves 30+ disconnected manual steps — gh search, HN scraping, Reddit scraping, dedup, market analysis, scaffold, write, npm/pip install, build, test, gh repo create, secrets, CI, runbook, monitoring. This framework collapses that into 6 console scripts + a fail-closed 8-gate publish guard, with a pluggable data-source layer so it isn't married to one chain explorer.
 >
@@ -114,6 +114,82 @@ The card includes the day's top hotspots, all shipped framework repos
 framework repo + each shipped repo. See `scripts/install_schedule.md`
 for the full env reference + macOS launchd PATH/env gotchas.
 
+## TG callback (interactive HITL)
+
+After receiving a Lark / TG card, click an inline button to invoke a
+framework action **without leaving the chat**:
+
+- **`📊 dry-publish`** — runs the 8-gate `check_auto_publish_safety`
+  for that case; replies with pass/fail + blocker list
+- **`🤖 write-stub`** — generates a minimal TypeScript skeleton (uses
+  Claude Haiku via `ANTHROPIC_API_KEY` if set; static fallback otherwise)
+- **`🚮 drop`** — marks the case `final_status=drop` + appends review log
+- **`💤 snooze 7d`** — pushes `next_review_date` forward 7 days
+
+Lark Custom Bot is push-only (its inline buttons can't trigger
+callbacks back to the framework), so the same buttons posted to Lark
+become **deep links into Telegram** that pre-fire the action. The
+long-running `agentflow-tg-listen` daemon (installed below) receives
+those clicks and dispatches them to the same `case_actions` handlers.
+
+### Setup (one-time)
+
+```bash
+# 1. Create a Telegram bot via @BotFather, copy the token
+# 2. Add the bot to your group chat, then in the same chat send "/start"
+#    so the bot can fetch chat history
+# 3. Set env:
+echo 'TELEGRAM_BOT_TOKEN=…' >> .env
+echo 'TELEGRAM_CHAT_ID=…' >> .env
+echo 'TELEGRAM_CALLBACK_SECRET=…(random ≥16-char string)' >> .env
+set -a && source .env && set +a
+launchctl setenv TELEGRAM_BOT_TOKEN "$TELEGRAM_BOT_TOKEN"
+launchctl setenv TELEGRAM_CALLBACK_SECRET "$TELEGRAM_CALLBACK_SECRET"
+
+# 4. Install the daemon (dry-run first, then --apply)
+bash scripts/install_tg_listener.sh
+bash scripts/install_tg_listener.sh --apply
+```
+
+The installer wraps `agentflow-schedule install --mode daemon`, which
+generates a launchd plist with `RunAtLoad=true` + `KeepAlive` (dict
+form: restart on crash / wait for network / honour clean exits) +
+`ThrottleInterval=10s` to prevent rapid-restart loops. On linux the
+equivalent is a `Type=simple` systemd service with
+`Restart=on-failure`. Verify with:
+
+```bash
+launchctl list | grep tg-listener        # macOS
+systemctl --user status com.agentflow.tg-listener.service  # linux
+```
+
+### Lark → TG deep link bridge
+
+Lark Custom Bot is push-only — buttons can't trigger callbacks. To get
+interactivity from Lark, configure the daily scan with
+`--lark-cta-tg-bot @your_bot_username`: the auto-promoted-cases button
+on the Lark card will become a deep link `https://t.me/your_bot?start=…`
+that opens the TG chat with a pre-fired action. This way Lark stays as
+the high-signal push channel while interactive HITL flows through the
+TG daemon.
+
+### Security model
+
+Always set `TELEGRAM_CALLBACK_SECRET` (a random ≥16-char string injected
+into every `callback_data`). The daemon ignores any callback whose data
+doesn't start with the secret prefix, blocking spoofed callbacks.
+Combine with `--chat-id-allowlist "id1,id2"` to lock the daemon to
+specific chats:
+
+```bash
+bash scripts/install_tg_listener.sh \
+  --chat-id-allowlist "12345678,87654321" \
+  --apply
+```
+
+Without an allowlist any chat the bot is invited to can fire actions,
+which is fine for solo use but unsafe for multi-tenant.
+
 ## Auto-promote (level B half-automation, optional)
 
 `agentflow-scan --auto-promote` lets the scanner automatically scaffold a
@@ -201,6 +277,21 @@ unzip /tmp/agentflow-skill.zip -d ~/.claude/skills/agentflow-pipeline
 ```
 
 For details on what the skill exposes, see [`skill/SKILL.md`](skill/SKILL.md).
+
+## One-shot install
+
+After downloading the skill zip from a release, run the bundled installer:
+
+```bash
+unzip agentflow-pipeline-skill.zip -d ~/.claude/skills/agentflow-pipeline
+cd ~/.claude/skills/agentflow-pipeline
+bash install.sh                    # detects macOS / linux, creates venv, registers entry points
+# … then edit .env to add LARK_WEBHOOK_URL / TELEGRAM_BOT_TOKEN, then re-run:
+bash install.sh --auto-promote     # also enables level-B auto-promote in the daily 10:00 job
+```
+
+The installer is idempotent — re-running it skips already-completed steps
+(venv exists, .env filled, launchd loaded) and only refreshes what changed.
 
 ## Architecture
 

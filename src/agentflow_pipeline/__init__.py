@@ -17,6 +17,13 @@ from .build_command_inference import (
     build_commands_for_candidate,
     register_build_inference_args,
 )
+from .case_actions import (
+    dispatch_callback_action,
+    handle_drop,
+    handle_dry_publish,
+    handle_snooze,
+    handle_write_stub,
+)
 from .chainstream_query_builder import (
     build_probe_query,
     register_query_builder_args,
@@ -43,6 +50,12 @@ from .lark_notifier import (
     notify_scan_complete,
     send_card,
     send_text,
+)
+from .notification_templates import (
+    DEFAULT_LARK_SCAN_CARD_TPL,
+    DEFAULT_TG_SCAN_CARD_TPL,
+    render_scan_card,
+    resolve_template,
 )
 from .monitoring_grafana_pagerduty import (
     apply_grafana_dashboard,
@@ -76,6 +89,13 @@ from .pool_runner import (
     run_pool_parallel,
 )
 from .post_publish import apply_post_publish_templates, summarize_post_publish_actions
+from .tg_callback_listener import ListenerStats, TgCallbackListener
+from .tg_notifier import (
+    TgSendResult,
+    notify_scan_complete as tg_notify_scan_complete,
+    send_card as tg_send_card,
+    send_text as tg_send_text,
+)
 from .topics_enrichment import (
     enrich_candidates_with_topics,
     fetch_repo_topics,
@@ -119,6 +139,11 @@ __all__ = [
     "notify_scan_complete",
     "send_card",
     "send_text",
+    # notification_templates
+    "DEFAULT_LARK_SCAN_CARD_TPL",
+    "DEFAULT_TG_SCAN_CARD_TPL",
+    "render_scan_card",
+    "resolve_template",
     # monitoring_grafana_pagerduty
     "apply_grafana_dashboard",
     "apply_pagerduty_service",
@@ -149,9 +174,23 @@ __all__ = [
     # post_publish
     "apply_post_publish_templates",
     "summarize_post_publish_actions",
+    # tg_callback_listener
+    "ListenerStats",
+    "TgCallbackListener",
+    # tg_notifier (aliased to avoid clashing with lark_notifier exports)
+    "TgSendResult",
+    "tg_notify_scan_complete",
+    "tg_send_card",
+    "tg_send_text",
     # topics_enrichment
     "enrich_candidates_with_topics",
     "fetch_repo_topics",
     "parse_repo_owner_name",
+    # case_actions
+    "dispatch_callback_action",
+    "handle_dry_publish",
+    "handle_write_stub",
+    "handle_drop",
+    "handle_snooze",
     "__version__",
 ]

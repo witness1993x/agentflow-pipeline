@@ -432,6 +432,71 @@ def test_main_install_systemd_dry_run_prints_units(
     # we leave that to a separate test below.
 
 
+# ---------------------------------------------------------------------------
+# daemon mode (TG callback listener)
+# ---------------------------------------------------------------------------
+
+
+def test_build_default_listener_spec_returns_daemon_mode(tmp_path: Path) -> None:
+    spec = si.build_default_listener_spec(
+        root=tmp_path,
+        listener_extra_args=["--bot-token-env", "TELEGRAM_BOT_TOKEN"],
+    )
+    assert spec.mode == "daemon"
+    assert spec.label == "com.agentflow.tg-listener"
+    # log_dir convention matches scan jobs
+    assert spec.log_dir == tmp_path.resolve() / "trends" / "_logs"
+    # working_dir is the resolved root
+    assert spec.working_dir == tmp_path.resolve()
+    # command targets the listener binary with --root and the extra args
+    assert "agentflow-tg-listen" in spec.command[0]
+    assert "--root" in spec.command
+    assert str(tmp_path.resolve()) in spec.command
+    assert "--bot-token-env" in spec.command
+    assert "TELEGRAM_BOT_TOKEN" in spec.command
+    # daemon mode does not use the times list
+    assert spec.times == []
+
+
+def test_build_macos_plist_daemon_mode_has_keepalive_dict_no_calendar(
+    tmp_path: Path,
+) -> None:
+    spec = si.build_default_listener_spec(root=tmp_path)
+    text = si.build_macos_plist(spec)
+
+    # daemon plists run on load + keep alive + throttle restart
+    assert "<key>RunAtLoad</key>" in text
+    assert "<key>KeepAlive</key>" in text
+    assert "<key>ThrottleInterval</key>" in text
+    assert "<integer>10</integer>" in text
+    # KeepAlive must be a dict so launchd respects clean exits
+    assert "<key>SuccessfulExit</key>" in text
+    assert "<key>Crashed</key>" in text
+    assert "<key>NetworkState</key>" in text
+    # Definitely no cron-style schedule
+    assert "<key>StartCalendarInterval</key>" not in text
+    # RunAtLoad must be true (cron mode would be false)
+    run_at_load_idx = text.index("<key>RunAtLoad</key>")
+    after = text[run_at_load_idx : run_at_load_idx + 80]
+    assert "<true/>" in after
+
+
+def test_build_systemd_units_daemon_mode_simple_service_no_timer(
+    tmp_path: Path,
+) -> None:
+    spec = si.build_default_listener_spec(root=tmp_path)
+    service, timer = si.build_systemd_units(spec)
+
+    assert "[Service]" in service
+    assert "Type=simple" in service
+    assert "Restart=on-failure" in service
+    assert "RestartSec=10" in service
+    # cron-only directives must not leak into daemon service
+    assert "Type=oneshot" not in service
+    # No timer companion in daemon mode
+    assert timer == ""
+
+
 def test_main_install_custom_times_and_scan_args(
     tmp_path: Path, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

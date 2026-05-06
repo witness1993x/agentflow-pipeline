@@ -46,6 +46,26 @@ from typing import Any, Iterable, TypedDict
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
+from .notification_templates import (
+    format_promoted_case_dir as _format_promoted_case_dir,
+)
+from .notification_templates import (
+    format_scanned_at as _format_scanned_at,
+)
+from .notification_templates import (
+    format_top_line as _format_top_line,
+)
+from .notification_templates import (
+    render_promoted_section as _render_promoted_section_str,
+)
+from .notification_templates import (
+    render_scan_card,
+    resolve_template,
+)
+from .notification_templates import (
+    summarise_by_source as _summarise_by_source,
+)
+
 
 _log = logging.getLogger("agentflow.lark_notifier")
 
@@ -435,121 +455,28 @@ def send_card(
 # ---------------------------------------------------------------------------
 # Convenience builder for the daily scan card.
 # ---------------------------------------------------------------------------
-def _format_scanned_at(scanned_at_raw: str) -> tuple[str, str]:
-    """Parse ``scanned_at`` ISO string into (HH:MM local, full local ISO).
-
-    Returns ("", scanned_at_raw) when the input doesn't parse cleanly so
-    we always have something to display.
-    """
-    if not scanned_at_raw:
-        return "", ""
-    try:
-        # Python's fromisoformat handles "+00:00" form natively from 3.11+.
-        normalised = scanned_at_raw
-        if normalised.endswith("Z"):
-            normalised = normalised[:-1] + "+00:00"
-        dt = datetime.fromisoformat(normalised)
-    except ValueError:
-        return "", scanned_at_raw
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    local = dt.astimezone()
-    return local.strftime("%H:%M"), local.isoformat()
-
-
-def _summarise_by_source(by_source: dict[str, Any]) -> str:
-    """Render ``by_source`` dict as ``"github=12, hn=4, reddit=0"``."""
-    if not isinstance(by_source, dict) or not by_source:
-        return "n/a"
-    short = {"github": "gh", "hackernews": "hn", "reddit": "rd"}
-    parts: list[str] = []
-    for k, v in by_source.items():
-        try:
-            count = int(v)
-        except (TypeError, ValueError):
-            count = 0
-        parts.append(f"{short.get(k, k)}={count}")
-    return ", ".join(parts)
-
-
-def _format_top_line(idx: int, item: dict[str, Any]) -> str:
-    """Render one ranked top hit as a single Markdown list line."""
-    src = str(item.get("source") or "?")
-    eng = item.get("engagement")
-    if eng is None:
-        # Fall back to the per-source raw scores when the aggregator hasn't
-        # been run (e.g. caller passed raw GitHub items).
-        eng = item.get("stars") or item.get("points") or item.get("score") or 0
-    try:
-        eng_int = int(eng)
-    except (TypeError, ValueError):
-        eng_int = 0
-    title = item.get("display_title") or item.get("title") or ""
-    if not title:
-        owner = item.get("owner") or ""
-        name = item.get("name") or ""
-        if owner and name:
-            title = f"{owner}/{name}"
-        else:
-            title = item.get("url") or "(no title)"
-    title = str(title)
-    if len(title) > 90:
-        title = title[:89] + "…"
-    return f"{idx}. [{src}] {eng_int}★ `{title}`"
-
-
-def _format_promoted_case_dir(case_dir: str) -> str:
-    """Render ``case_dir`` as a framework-relative path for card body.
-
-    Tries to surface ``cases/<basename>`` (the canonical layout under the
-    framework root) when the absolute path contains a ``cases`` segment;
-    falls back to ``Path(case_dir).name`` so a malformed input still
-    renders something useful.
-    """
-    if not case_dir:
-        return ""
-    raw = str(case_dir)
-    # Normalise separators so the cases-segment lookup works on either
-    # POSIX or Windows-style inputs without dragging in os.sep.
-    parts = raw.replace("\\", "/").split("/")
-    # Walk from the end so a path like ``/x/cases/cases/HSP-1`` still
-    # picks the deepest cases/<...> segment (matches the canonical layout).
-    for i in range(len(parts) - 1, -1, -1):
-        if parts[i] == "cases" and i < len(parts) - 1:
-            return "/".join(parts[i:])
-    name = Path(raw).name
-    return name or raw
+# The body-rendering helpers (`_format_scanned_at`, `_summarise_by_source`,
+# `_format_top_line`, `_format_promoted_case_dir`) live in
+# :mod:`agentflow_pipeline.notification_templates` so operators can also
+# bring their own template body. We re-import them above with the leading
+# underscore to keep the legacy callsite (`from .lark_notifier import _foo`)
+# patterns working, but the Markdown layout itself now flows through the
+# template system.
 
 
 def _render_promoted_section(promoted: list[dict]) -> list[str]:
-    """Render the ``📝 自动 promote`` section as a list of body lines.
+    """Backwards-compat shim: legacy callers expected a list of lines.
 
-    Returns ``[]`` when the input is empty so callers can blindly
-    extend without inserting blank ``¶`` paragraphs.
+    Internal-only — :func:`notify_scan_complete` now consumes the
+    string form returned by
+    :func:`notification_templates.render_promoted_section`. Kept so
+    any external monkeypatches that imported the underscore-prefixed
+    helper continue to work.
     """
-    cases = [c for c in promoted if isinstance(c, dict)]
-    if not cases:
+    rendered = _render_promoted_section_str(promoted)
+    if not rendered:
         return []
-
-    lines: list[str] = [
-        f"**📝 自动 promote 了 {len(cases)} 个新 case** (尚未写代码)"
-    ]
-    show = cases[:3]
-    for case in show:
-        hotspot_id = str(case.get("hotspot_id") or "?")
-        hotspot_name = str(case.get("hotspot_name") or "")
-        if len(hotspot_name) > 60:
-            hotspot_name = hotspot_name[:59] + "…"
-        rel = _format_promoted_case_dir(str(case.get("case_dir") or ""))
-        name_part = f" {hotspot_name}" if hotspot_name else ""
-        if rel:
-            lines.append(f"- `{hotspot_id}`{name_part} — `{rel}`")
-        else:
-            lines.append(f"- `{hotspot_id}`{name_part}")
-    extra = len(cases) - len(show)
-    if extra > 0:
-        lines.append(f"- (+ {extra} more)")
-    return lines
+    return rendered.split("\n")
 
 
 def notify_scan_complete(
@@ -584,20 +511,15 @@ def notify_scan_complete(
       4. ``📊 查看 scan.md`` when ``trends_view_url`` is set
     """
     unique_count = int(scan_result.get("unique_count") or 0)
-    by_source = scan_result.get("by_source") or {}
-    duplicates_merged = int(scan_result.get("duplicates_merged") or 0)
-    scanned_at_raw = str(scan_result.get("scanned_at") or "")
-    top_items = list(scan_result.get("top") or [])
     promoted_cases = [
         c for c in (auto_promoted_cases or []) if isinstance(c, dict)
     ]
 
-    hh_mm, full_local = _format_scanned_at(scanned_at_raw)
-    safe_top_n = max(1, int(top_n or 5))
-
     # Header / accent based on volume — promoted cases bump us to green
     # so the operator can spot "today actually produced something" at a
-    # glance, even when overall volume is modest.
+    # glance, even when overall volume is modest. The accent / button
+    # choice is *transport-layer* policy and stays here rather than
+    # leaking into the user-customisable template.
     if promoted_cases and unique_count > 0:
         accent = "green"
     elif unique_count >= 30:
@@ -609,52 +531,32 @@ def notify_scan_complete(
     else:
         accent = "blue"
 
-    title_suffix = f" ({hh_mm})" if hh_mm else ""
-    title = f"🔎 AgentFlow · 每日热点扫描{title_suffix}"
+    # Resolve the (possibly user-overridden) template and render
+    # title + body in one shot. ``host_root`` is derived from the scan
+    # result's ``output_dir`` (typically ``<host>/trends/<run-id>/``),
+    # falling back to no-host so the bundled default kicks in.
+    output_dir = scan_result.get("output_dir")
+    host_root: Path | None = None
+    if output_dir:
+        try:
+            host_root = Path(str(output_dir)).resolve().parent.parent
+        except (OSError, ValueError):
+            host_root = None
 
-    body_lines: list[str] = []
-    if unique_count == 0:
-        body_lines.append("**📊 今日扫描完成: 暂无可写热点** (上游空 / filter 过窄 / 配额耗尽)")
-        body_lines.append("")
-        body_lines.append(f"sources: {_summarise_by_source(by_source)}")
-    else:
-        body_lines.append(
-            f"**📊 扫到 {unique_count} unique 候选** · sources: {_summarise_by_source(by_source)}"
-        )
-        if duplicates_merged:
-            body_lines.append(f"_合并掉 {duplicates_merged} 条跨源重复_")
-        body_lines.append("")
-        body_lines.append(f"**🔥 Top {min(safe_top_n, len(top_items))}**:")
-        for i, item in enumerate(top_items[:safe_top_n], 1):
-            if not isinstance(item, dict):
-                continue
-            body_lines.append(_format_top_line(i, item))
-
-    body_lines.append("")
-    if shipped_repos:
-        body_lines.append(f"**📦 Framework 已 ship ({len(shipped_repos)})**:")
-        for repo in shipped_repos:
-            if not isinstance(repo, dict):
-                continue
-            name = str(repo.get("name") or "?")
-            lang = str(repo.get("language") or "?") or "?"
-            shape = str(repo.get("shape") or "?") or "?"
-            body_lines.append(f"- {name} ({lang}, {shape})")
-    else:
-        body_lines.append(
-            "**📦 尚未 ship 任何 repo (cases/ 下无 final_status=publish 的案例)**"
-        )
-
-    promoted_lines = _render_promoted_section(promoted_cases)
-    if promoted_lines:
-        body_lines.append("")
-        body_lines.extend(promoted_lines)
-
-    if full_local:
-        body_lines.append("")
-        body_lines.append(f"scanned_at: `{full_local}`")
-
-    body_md = "\n".join(body_lines)
+    template_body = resolve_template(name="lark_scan_card", host_root=host_root)
+    title, body_md = render_scan_card(
+        template=template_body,
+        scan_result=scan_result,
+        shipped_repos=list(shipped_repos or []),
+        auto_promoted_cases=promoted_cases,
+        top_n=top_n,
+        # ``send_card`` already prepends ``LARK_WEBHOOK_BRAND_PREFIX``
+        # to the title — passing an empty brand_prefix here keeps that
+        # behaviour byte-for-byte equivalent. Operators using a custom
+        # template can opt back into ``$brand_prefix`` if they want a
+        # different position.
+        brand_prefix="",
+    )
 
     # Buttons: framework -> up to 3 ship'd repos -> promoted -> trends-view.
     actions: list[tuple[str, str]] = [

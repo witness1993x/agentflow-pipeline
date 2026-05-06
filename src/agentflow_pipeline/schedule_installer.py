@@ -47,7 +47,8 @@ class ScheduleSpec:
         launchd label / systemd unit basename, e.g.
         ``"com.agentflow.scan.daily"``.
     times:
-        Local-time HH:MM strings the job should fire at.
+        Local-time HH:MM strings the job should fire at. Ignored when
+        ``mode == "daemon"``.
     command:
         Full argv list passed to launchd's ``ProgramArguments`` or
         systemd's ``ExecStart``.
@@ -58,6 +59,14 @@ class ScheduleSpec:
         stream for launchd; systemd inherits journal).
     description:
         Human-readable note inserted into the unit/plist as a comment.
+    mode:
+        Either ``"cron"`` (default; ``StartCalendarInterval`` /
+        ``OnCalendar`` recurring job) or ``"daemon"`` (long-running
+        process kept alive by launchd / systemd, e.g. the
+        ``agentflow-tg-listen`` Telegram callback listener). In
+        ``daemon`` mode ``times`` is ignored and the resulting unit
+        has ``RunAtLoad=true`` + ``KeepAlive`` (macOS) or
+        ``Type=simple`` + ``Restart=on-failure`` (linux).
     """
 
     label: str
@@ -66,6 +75,7 @@ class ScheduleSpec:
     working_dir: Path
     log_dir: Path
     description: str = ""
+    mode: str = "cron"
 
 
 # ---------------------------------------------------------------------------
@@ -119,32 +129,60 @@ def _ensure_log_dir(spec: ScheduleSpec, *, dry_run: bool, actions: list[str]) ->
 def build_macos_plist(spec: ScheduleSpec) -> str:
     """Return a launchd-compatible plist XML string for ``spec``.
 
-    The plist contains:
+    For ``spec.mode == "cron"`` (the default) the plist contains:
 
     * ``Label`` from ``spec.label``
     * ``ProgramArguments`` from ``spec.command``
     * ``StartCalendarInterval`` as a list of dicts (one per time)
     * ``WorkingDirectory``, ``StandardOutPath``, ``StandardErrorPath``
     * ``RunAtLoad = False`` and ``KeepAlive = False``
-    """
-    intervals: list[dict[str, int]] = []
-    for t in spec.times:
-        h, m = _parse_hhmm(t)
-        intervals.append({"Hour": h, "Minute": m})
 
+    For ``spec.mode == "daemon"`` the plist drops
+    ``StartCalendarInterval`` entirely and instead sets:
+
+    * ``RunAtLoad = True`` (start the daemon on user-login / load)
+    * ``KeepAlive`` as a dict ``{"SuccessfulExit": False,
+      "Crashed": True, "NetworkState": True}`` so launchd auto-
+      restarts on crash and waits for network, but a clean ``exit 0``
+      is honoured (lets the operator stop the daemon gracefully)
+    * ``ThrottleInterval = 10`` (seconds) to prevent rapid restart
+      loops if the daemon dies immediately on launch
+    """
     stdout_path = str(spec.log_dir / f"{spec.label}.out.log")
     stderr_path = str(spec.log_dir / f"{spec.label}.err.log")
 
-    payload: dict[str, Any] = {
-        "Label": spec.label,
-        "ProgramArguments": list(spec.command),
-        "WorkingDirectory": str(spec.working_dir),
-        "StandardOutPath": stdout_path,
-        "StandardErrorPath": stderr_path,
-        "RunAtLoad": False,
-        "KeepAlive": False,
-        "StartCalendarInterval": intervals,
-    }
+    if spec.mode == "daemon":
+        payload: dict[str, Any] = {
+            "Label": spec.label,
+            "ProgramArguments": list(spec.command),
+            "WorkingDirectory": str(spec.working_dir),
+            "StandardOutPath": stdout_path,
+            "StandardErrorPath": stderr_path,
+            "RunAtLoad": True,
+            "KeepAlive": {
+                "SuccessfulExit": False,
+                "Crashed": True,
+                "NetworkState": True,
+            },
+            "ThrottleInterval": 10,
+        }
+    else:
+        intervals: list[dict[str, int]] = []
+        for t in spec.times:
+            h, m = _parse_hhmm(t)
+            intervals.append({"Hour": h, "Minute": m})
+
+        payload = {
+            "Label": spec.label,
+            "ProgramArguments": list(spec.command),
+            "WorkingDirectory": str(spec.working_dir),
+            "StandardOutPath": stdout_path,
+            "StandardErrorPath": stderr_path,
+            "RunAtLoad": False,
+            "KeepAlive": False,
+            "StartCalendarInterval": intervals,
+        }
+
     if spec.description:
         # launchd has no first-class description; stash in a custom key.
         payload["Comment"] = spec.description
@@ -345,16 +383,42 @@ def _shell_quote(arg: str) -> str:
 def build_systemd_units(spec: ScheduleSpec) -> tuple[str, str]:
     """Return ``(service_unit_text, timer_unit_text)`` for ``spec``.
 
-    The service is ``Type=oneshot`` and writes stdout/stderr to files
-    under ``spec.log_dir`` so output is preserved even when running in
-    a headless environment without journald querying.
-    The timer fires once per HH:MM in ``spec.times`` using
-    ``OnCalendar=*-*-* HH:MM:00``.
+    For ``spec.mode == "cron"`` (default) the service is
+    ``Type=oneshot`` and writes stdout/stderr to files under
+    ``spec.log_dir``. The timer fires once per HH:MM in ``spec.times``
+    using ``OnCalendar=*-*-* HH:MM:00``.
+
+    For ``spec.mode == "daemon"`` the service is ``Type=simple`` with
+    ``Restart=on-failure`` + ``RestartSec=10`` so systemd keeps the
+    long-running process alive across crashes; the returned
+    ``timer_unit_text`` is the empty string (no timer is generated).
     """
     description = spec.description or f"agentflow-scan recurring job ({spec.label})"
     exec_start = " ".join(_shell_quote(arg) for arg in spec.command)
     stdout_path = spec.log_dir / f"{spec.label}.out.log"
     stderr_path = spec.log_dir / f"{spec.label}.err.log"
+
+    if spec.mode == "daemon":
+        service_text = (
+            "[Unit]\n"
+            f"Description={description}\n"
+            "After=network-online.target\n"
+            "Wants=network-online.target\n"
+            "\n"
+            "[Service]\n"
+            "Type=simple\n"
+            f"WorkingDirectory={spec.working_dir}\n"
+            f"ExecStart={exec_start}\n"
+            f"StandardOutput=append:{stdout_path}\n"
+            f"StandardError=append:{stderr_path}\n"
+            "Restart=on-failure\n"
+            "RestartSec=10\n"
+            "\n"
+            "[Install]\n"
+            "WantedBy=default.target\n"
+        )
+        # daemon mode has no timer companion
+        return service_text, ""
 
     service_text = (
         "[Unit]\n"
@@ -417,20 +481,26 @@ def install_systemd_timer(
     user_scope: bool = True,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Install a systemd service+timer pair for ``spec``."""
+    """Install a systemd service+timer pair for ``spec``.
+
+    For ``spec.mode == "daemon"`` only the ``.service`` file is
+    installed (no timer) and ``systemctl enable --now`` targets the
+    service directly.
+    """
     actions: list[str] = []
     errors: list[str] = []
     service_text, timer_text = build_systemd_units(spec)
     unit_dir = _systemd_unit_dir(user_scope=user_scope)
     service_path = unit_dir / f"{spec.label}.service"
     timer_path = unit_dir / f"{spec.label}.timer"
+    is_daemon = spec.mode == "daemon"
 
     result: dict[str, Any] = {
         "platform": "linux",
         "label": spec.label,
         "user_scope": user_scope,
         "service_path": str(service_path),
-        "timer_path": str(timer_path),
+        "timer_path": "" if is_daemon else str(timer_path),
         "service_text": service_text,
         "timer_text": timer_text,
         "actions": actions,
@@ -442,17 +512,22 @@ def install_systemd_timer(
 
     sysctl = _systemctl_cmd(user_scope=user_scope)
     reload_cmd = sysctl + ["daemon-reload"]
-    enable_cmd = sysctl + ["enable", "--now", f"{spec.label}.timer"]
+    if is_daemon:
+        enable_cmd = sysctl + ["enable", "--now", f"{spec.label}.service"]
+    else:
+        enable_cmd = sysctl + ["enable", "--now", f"{spec.label}.timer"]
 
     if dry_run:
         actions.append(f"would write {service_path}")
-        actions.append(f"would write {timer_path}")
+        if not is_daemon:
+            actions.append(f"would write {timer_path}")
         actions.append(f"would run: {' '.join(reload_cmd)}")
         actions.append(f"would run: {' '.join(enable_cmd)}")
         result["status"] = "dry_run"
         return result
 
-    if (service_path.exists() or timer_path.exists()) and not force:
+    existing = service_path.exists() or (not is_daemon and timer_path.exists())
+    if existing and not force:
         result["status"] = "exists"
         actions.append(
             f"unit files already exist under {unit_dir}; pass force=True to overwrite"
@@ -462,9 +537,10 @@ def install_systemd_timer(
     try:
         unit_dir.mkdir(parents=True, exist_ok=True)
         service_path.write_text(service_text, encoding="utf-8")
-        timer_path.write_text(timer_text, encoding="utf-8")
         actions.append(f"wrote {service_path}")
-        actions.append(f"wrote {timer_path}")
+        if not is_daemon:
+            timer_path.write_text(timer_text, encoding="utf-8")
+            actions.append(f"wrote {timer_path}")
     except Exception as exc:
         errors.append(f"write units failed: {exc!r}")
         result["status"] = "failed"
@@ -627,6 +703,50 @@ def build_default_scan_spec(
     )
 
 
+def build_default_listener_spec(
+    *,
+    root: Path,
+    label: str = "com.agentflow.tg-listener",
+    listener_extra_args: list[str] | None = None,
+) -> ScheduleSpec:
+    """Construct a daemon :class:`ScheduleSpec` for ``agentflow-tg-listen``.
+
+    The Telegram callback listener is a long-running process that polls
+    Telegram's ``getUpdates`` endpoint and dispatches inline-keyboard
+    button clicks to the framework's case_actions handlers. It must be
+    kept alive across crashes and on user-login, hence ``mode="daemon"``.
+
+    Parameters
+    ----------
+    root:
+        Host project root. Used as both the listener's working
+        directory and the parent of the ``trends/_logs/`` directory
+        where stdout/stderr are appended.
+    label:
+        launchd label / systemd unit basename. Default
+        ``"com.agentflow.tg-listener"``.
+    listener_extra_args:
+        Extra argv passed to ``agentflow-tg-listen`` after the
+        ``--root`` flag (e.g. ``["--bot-token-env", "TELEGRAM_BOT_TOKEN",
+        "--callback-secret-env", "TELEGRAM_CALLBACK_SECRET"]``).
+    """
+    root = Path(root).expanduser().resolve()
+    extra = list(listener_extra_args) if listener_extra_args else []
+
+    listener_bin = shutil.which("agentflow-tg-listen") or "agentflow-tg-listen"
+    command: list[str] = [listener_bin, "--root", str(root), *extra]
+
+    return ScheduleSpec(
+        label=label,
+        times=[],
+        command=command,
+        working_dir=root,
+        log_dir=root / "trends" / "_logs",
+        description="agentflow-tg-listen Telegram callback daemon",
+        mode="daemon",
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -697,19 +817,46 @@ def _build_parser() -> argparse.ArgumentParser:
     p_install = sub.add_parser("install", help="Install the recurring job.")
     _add_common(p_install)
     p_install.add_argument(
+        "--mode",
+        choices=("cron", "daemon"),
+        default="cron",
+        help=(
+            'Job shape. "cron" (default) installs a recurring '
+            "agentflow-scan job at --times. \"daemon\" installs a "
+            "long-running agentflow-tg-listen process kept alive by "
+            "launchd/systemd (RunAtLoad + KeepAlive on macOS, "
+            "Type=simple + Restart=on-failure on linux). In daemon "
+            "mode --times is ignored."
+        ),
+    )
+    p_install.add_argument(
         "--times",
         default=",".join(DEFAULT_TIMES),
-        help='Comma-separated HH:MM times (default: "09:00,21:00").',
+        help='Comma-separated HH:MM times (default: "09:00,21:00"). Ignored in --mode daemon.',
     )
     p_install.add_argument(
         "--root",
         default=str(Path.cwd()),
-        help="Host project root passed as --root to agentflow-scan.",
+        help="Host project root passed as --root to the underlying binary.",
     )
     p_install.add_argument(
         "--scan-args",
         default="",
-        help='Extra argv passed to agentflow-scan, e.g. "--sources github,hackernews".',
+        help=(
+            "Extra argv passed to agentflow-scan in cron mode "
+            '(e.g. "--sources github,hackernews"). Also accepted as '
+            "passthrough args in daemon mode if --daemon-args is empty."
+        ),
+    )
+    p_install.add_argument(
+        "--daemon-args",
+        default="",
+        help=(
+            "Extra argv passed to the daemon binary in --mode daemon "
+            '(e.g. "--bot-token-env TELEGRAM_BOT_TOKEN '
+            '--callback-secret-env TELEGRAM_CALLBACK_SECRET"). '
+            "Takes precedence over --scan-args in daemon mode."
+        ),
     )
     p_install.add_argument(
         "--force",
@@ -759,7 +906,8 @@ def _print_result(result: dict[str, Any]) -> None:
         print(f"[agentflow-schedule] plist    = {result['plist_path']}")
     if "service_path" in result:
         print(f"[agentflow-schedule] service  = {result['service_path']}")
-        print(f"[agentflow-schedule] timer    = {result['timer_path']}")
+        if result.get("timer_path"):
+            print(f"[agentflow-schedule] timer    = {result['timer_path']}")
 
     if result.get("plist_text"):
         print("\n----- plist -----")
@@ -767,8 +915,9 @@ def _print_result(result: dict[str, Any]) -> None:
     if result.get("service_text"):
         print("\n----- {label}.service -----".format(label=result.get("label")))
         print(result["service_text"])
-        print("----- {label}.timer -----".format(label=result.get("label")))
-        print(result["timer_text"])
+        if result.get("timer_text"):
+            print("----- {label}.timer -----".format(label=result.get("label")))
+            print(result["timer_text"])
 
     actions = result.get("actions") or []
     if actions:
@@ -801,12 +950,29 @@ def main(argv: list[str] | None = None) -> int:
     dry_run = not apply_flag
 
     if args.cmd == "install":
-        spec = build_default_scan_spec(
-            root=Path(args.root),
-            label=args.label,
-            times=_split_csv(args.times) or None,
-            scan_extra_args=_parse_scan_args(args.scan_args),
-        )
+        mode = getattr(args, "mode", "cron")
+        if mode == "daemon":
+            # Use --daemon-args if provided; otherwise fall back to --scan-args
+            # (treated as generic passthrough in daemon context).
+            daemon_args_str = getattr(args, "daemon_args", "") or args.scan_args
+            # In daemon mode the default label should reflect that this is
+            # the listener; only override the global default though, to
+            # respect any explicit --label the user passed.
+            label = args.label
+            if label == "com.agentflow.scan.daily":
+                label = "com.agentflow.tg-listener"
+            spec = build_default_listener_spec(
+                root=Path(args.root),
+                label=label,
+                listener_extra_args=_parse_scan_args(daemon_args_str),
+            )
+        else:
+            spec = build_default_scan_spec(
+                root=Path(args.root),
+                label=args.label,
+                times=_split_csv(args.times) or None,
+                scan_extra_args=_parse_scan_args(args.scan_args),
+            )
         if platform == "macos":
             result = install_macos_launchd(
                 spec, dry_run=dry_run, force=bool(args.force)

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentflow-pipeline"
-version = "0.3.0"
-description = "Hotspot → GitHub → data-source pipeline framework: discover, score, route, probe, publish, monitor, Lark notify, auto-promote."
+version = "0.4.0"
+description = "Hotspot → GitHub → data-source pipeline framework: discover, score, route, probe, publish, monitor, Lark+TG dual-channel, interactive callbacks, OpenClaw plugin."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -53,6 +53,8 @@ agentflow-init = "agentflow_pipeline.init_command:main"
 agentflow-scan = "agentflow_pipeline.scan_hotspots:main"
 agentflow-trends = "agentflow_pipeline.trends_diff:main"
 agentflow-schedule = "agentflow_pipeline.schedule_installer:main"
+agentflow-tg-listen = "agentflow_pipeline.tg_callback_listener:_main_entry"
+agentflow-tg-notify = "agentflow_pipeline.tg_notifier:_main_entry"
 
 [project.urls]
 Homepage = "https://github.com/witness1993x/agentflow-pipeline"
