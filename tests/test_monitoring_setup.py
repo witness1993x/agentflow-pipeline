@@ -63,6 +63,38 @@ def test_seed_credits_legacy_no_planned_arg_keeps_writing(tmp_path: Path) -> Non
     assert _workflow_path(tmp_path).exists()
 
 
+def test_seed_credits_writes_correct_chainstream_auth_and_endpoint(tmp_path: Path) -> None:
+    """Pin the auth + endpoint contract.
+
+    Regression guard: an earlier body used Authorization: Bearer + REST
+    api.chainstream.io/v1/account/credits which 404'd / 401'd on every
+    real run. ChainStream's GraphQL API actually wants X-API-KEY +
+    graphql.chainstream.io/graphql, and there's no public account-balance
+    endpoint, so the workflow must be a liveness probe.
+    """
+    seed_credits_check_workflow(tmp_path, secrets_planned={"CHAINSTREAM_API_KEY"})
+    body = _workflow_path(tmp_path).read_text(encoding="utf-8")
+
+    # Auth: must use X-API-KEY, must NOT use Bearer.
+    assert "X-API-KEY: ${CHAINSTREAM_API_KEY}" in body
+    assert "Authorization: Bearer" not in body
+
+    # Endpoint: GraphQL, not the dead REST account/credits.
+    assert "graphql.chainstream.io/graphql" in body
+    assert "api.chainstream.io/v1/account/credits" not in body
+
+    # Method: POST + GraphQL query, not GET.
+    assert "-X POST" in body
+    assert '"query":"{ __schema { queryType { name } } }"' in body
+
+    # Liveness check: assert queryType.name == "Query".
+    assert "queryType" in body
+    assert "!= \"Query\"" in body
+
+    # Still has the secret-missing guard.
+    assert 'CHAINSTREAM_API_KEY secret is not configured' in body
+
+
 def test_seed_credits_idempotent_when_already_present(tmp_path: Path) -> None:
     target = _workflow_path(tmp_path)
     target.parent.mkdir(parents=True, exist_ok=True)
