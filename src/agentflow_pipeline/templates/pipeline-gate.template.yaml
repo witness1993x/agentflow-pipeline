@@ -47,6 +47,9 @@ gate_0_reframe:
   verdict: "pass" # pass | hold | fail
 
 gate_1_hotspot_signal:
+  # NOTE: leaving every dimension at 0 + decision.final_status="watch" makes
+  # this a placeholder case. `agentflow-pipeline --mode inspect` will warn
+  # until you either fill in evidence or move final_status to "drop".
   score: 0
   dimensions:
     signal_strength: 0

@@ -386,11 +386,27 @@ jobs:
 """
 
 
-def seed_credits_check_workflow(workspace: Path) -> dict:
-    """Write the daily credits-check workflow. Skip if it already exists."""
+def seed_credits_check_workflow(
+    workspace: Path,
+    *,
+    secrets_planned: set[str] | None = None,
+) -> dict:
+    """Write the daily credits-check workflow. Skip if it already exists.
+
+    ``secrets_planned``: when provided, must contain ``CHAINSTREAM_API_KEY``
+    or this step is skipped with ``skip_reason="missing_secret_CHAINSTREAM_API_KEY"``.
+    Without that secret the cron would fail every day with no way to recover,
+    polluting repo-admin email and the Actions health signal. ``None`` keeps
+    legacy behavior for older callers.
+    """
     workspace = Path(workspace)
     target = workspace / _CREDITS_WORKFLOW_REL
     report: dict[str, Any] = {"path": str(target.relative_to(workspace)), "written": False, "skipped": False, "errors": []}
+
+    if secrets_planned is not None and "CHAINSTREAM_API_KEY" not in secrets_planned:
+        report["skipped"] = True
+        report["skip_reason"] = "missing_secret_CHAINSTREAM_API_KEY"
+        return report
 
     try:
         if not workspace.exists():
@@ -683,9 +699,14 @@ def run_monitoring_setup(
             {"step": "security", "reason": f"exception: {type(exc).__name__}"}
         ]}
 
-    # 4. Credits-check workflow (workspace-only, always safe to seed).
+    # 4. Credits-check workflow (workspace-only). Skipped when CHAINSTREAM_API_KEY
+    # is not in the planned secrets — seeding the cron without the secret causes
+    # daily fail-emails with no way for the workflow itself to recover.
     try:
-        report["credits_workflow"] = seed_credits_check_workflow(workspace)
+        report["credits_workflow"] = seed_credits_check_workflow(
+            workspace,
+            secrets_planned=set(secrets.keys()),
+        )
     except Exception as exc:  # noqa: BLE001
         report["credits_workflow"] = {"errors": [
             {"step": "credits_workflow", "reason": f"exception: {type(exc).__name__}"}

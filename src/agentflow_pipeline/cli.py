@@ -214,7 +214,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         default="inspect",
-        choices=["inspect", "discover", "data-probe", "kafka-probe", "probe", "publish", "pool"],
+        choices=["inspect", "discover", "data-probe", "kafka-probe", "probe", "publish", "pool", "reconcile-publish"],
         help="Execution mode. Default: inspect",
     )
     parser.add_argument(
@@ -1800,6 +1800,52 @@ def evaluate_publish_readiness(config: dict) -> str:
     return readiness
 
 
+_HOTSPOT_SIGNAL_DIM_KEYS = (
+    "signal_strength",
+    "behavior_evidence",
+    "market_activity",
+    "timing_window",
+    "evidence_quality",
+)
+
+
+def audit_hotspot_signal_health(config: dict) -> list[str]:
+    """Return warnings when gate_1_hotspot_signal is empty past bootstrap.
+
+    Empty signal at scaffold time is fine, but a case sitting in ``watch`` /
+    ``probe`` / ``publish_ready`` with every dimension still 0 is a
+    placeholder that's going to rot. Flag it so the operator either fills
+    in real evidence or moves ``decision.final_status`` to ``drop``.
+    """
+    warnings: list[str] = []
+    final_status = require_string(config, "decision", "final_status")
+    # Only warn on intermediate states. ``""`` is freshly scaffolded; ``drop``
+    # is an explicit retirement; ``publish`` means the case already shipped —
+    # warning past ship is noise, not actionable.
+    if final_status in ("", "drop", "publish"):
+        return warnings
+
+    g1 = config.get("gate_1_hotspot_signal") if isinstance(config, dict) else None
+    if not isinstance(g1, dict):
+        return warnings
+    dims = g1.get("dimensions")
+    if not isinstance(dims, dict):
+        return warnings
+
+    try:
+        values = [int(dims.get(k, 0) or 0) for k in _HOTSPOT_SIGNAL_DIM_KEYS]
+    except (TypeError, ValueError):
+        return warnings
+
+    if all(v == 0 for v in values):
+        warnings.append(
+            "[hotspot-signal] gate_1_hotspot_signal.dimensions all zero while "
+            f"decision.final_status='{final_status}'. Either fill in real "
+            "evidence or move final_status to 'drop' to retire this case."
+        )
+    return warnings
+
+
 def update_gate_after_probe(config: dict, workspace: Path, candidate: dict, results: dict, mode: str, repo_ref: str = "") -> None:
     execution_state = ensure_execution_state(config)
     probe_state = ensure_nested_dict(execution_state, "probe")
@@ -2240,7 +2286,32 @@ def main() -> int:
         )
 
     if args.mode == "inspect":
+        for warning in audit_hotspot_signal_health(config):
+            print(warning, file=sys.stderr)
         return 0
+
+    if args.mode == "reconcile-publish":
+        from .publish_reconcile import reconcile_publish, summarize_reconcile
+
+        print_section("Reconcile Publish State")
+        report = reconcile_publish(
+            config,
+            run_command=run_command,
+            dry_run=not args.execute,
+        )
+        print(summarize_reconcile(report))
+        if args.execute and report.get("status") == "patched" and not args.no_writeback:
+            dump_gate_file(gate_file, config)
+            update_pool_row(pool_file, config, case_dir)
+            append_review_log(
+                config,
+                previous_status="",
+                new_status="publish",
+                what_changed=f"reconcile-publish wrote publish_state for {report.get('repo_ref', '')}",
+                lessons="auto-reconciled from gh repo view; case had been shipped via path that bypassed --mode publish",
+            )
+            dump_gate_file(gate_file, config)
+        return 0 if report.get("status") in ("patched", "already_reconciled", "ready_to_patch") else 1
 
     if args.mode == "discover":
         print_section("Discovery")
